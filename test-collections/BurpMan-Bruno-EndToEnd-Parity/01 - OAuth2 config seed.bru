@@ -1,0 +1,36 @@
+meta {
+  name: 01 - OAuth2 config seed
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/anything/oauth/token-config
+  body: formUrlEncoded
+  auth: oauth2
+}
+
+headers {
+  Content-Type: application/x-www-form-urlencoded
+}
+
+body:form-urlencoded {
+  grant_type: client_credentials
+  client_id: {{oauth_client_id}}
+  client_secret: {{oauth_client_secret}}
+  scope: {{oauth_scope}}
+}
+
+auth:oauth2 {
+  grant_type: client_credentials
+  access_token_url: {{base_url}}/response-headers?access_token={{mock_access_token}}&token_type=Bearer&expires_in=75
+  client_id: {{oauth_client_id}}
+  client_secret: {{oauth_client_secret}}
+  scope: {{oauth_scope}}
+}
+
+tests {
+  test("01 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+}

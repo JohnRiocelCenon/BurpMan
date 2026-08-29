@@ -1,0 +1,18 @@
+{
+  "vars": {
+    "base_url": "https://httpbin.org",
+    "suite_name": "burpman-bruno-parity",
+    "mock_access_token": "BRUNO-MOCK-TOKEN-XYZ",
+    "oauth_client_id": "burpman-client",
+    "oauth_client_secret": "burpman-secret",
+    "oauth_scope": "burpman.read burpman.write",
+    "static_jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJidXJwbWFuIiwiZXhwIjoyNTM0MDIzMDA3OTl9.signature",
+    "api_key": "BURPMAN-API-KEY-123",
+    "graphql_name": "BurpMan",
+    "bruno.run_id": "",
+    "bruno.user": "",
+    "bruno.user_id": "42",
+    "bruno.code": "",
+    "token": ""
+  }
+}

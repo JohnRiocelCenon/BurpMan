@@ -1,0 +1,233 @@
+{
+  "info": {
+    "name": "BurpMan Postman Advanced Scripting",
+    "description": "Focused validation of advanced pre/post script behavior in BurpMan: pm.sendRequest callback writes, variable carryover, setNextRequest jumping, redirect code extraction, and x-www-form-urlencoded token-style exchange.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "noauth" },
+  "variable": [
+    { "key": "base_url", "value": "https://httpbin.org" },
+    { "key": "pm_flow_code", "value": "" },
+    { "key": "pm_child_uuid", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 - pre script seeds vars",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/get?stage=01&run={{pm_run_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["get"],
+          "query": [
+            { "key": "stage", "value": "01" },
+            { "key": "run", "value": "{{pm_run_id}}" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.environment.set('pm_run_id', 'run-' + Date.now());",
+              "pm.environment.set('pm_user', 'postman-smoke');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var j = pm.response.json();",
+              "pm.test('01 - run id interpolated', function () { pm.expect(j.args.run).to.match(/^run-\\d+$/); });",
+              "pm.test('01 - status 200', function () { pm.expect(pm.response.code).to.equal(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - pm.sendRequest callback writes env",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/get?stage=02&uuid={{pm_child_uuid}}",
+          "host": ["{{base_url}}"],
+          "path": ["get"],
+          "query": [
+            { "key": "stage", "value": "02" },
+            { "key": "uuid", "value": "{{pm_child_uuid}}" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.sendRequest('{{base_url}}/uuid', function (err, res) {",
+              "  if (!err && res) {",
+              "    var data = res.json();",
+              "    pm.environment.set('pm_child_uuid', data.uuid);",
+              "  }",
+              "});"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var uuid = pm.environment.get('pm_child_uuid');",
+              "pm.test('02 - callback set uuid', function () { pm.expect(uuid).to.match(/^[0-9a-f-]{36}$/); });",
+              "pm.test('02 - request used callback uuid', function () { pm.expect(pm.response.json().args.uuid).to.equal(uuid); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - redirect code extraction",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/redirect-to?status_code=302&url=https://example.org/callback?code=PM-CODE-123&state=ok",
+          "host": ["{{base_url}}"],
+          "path": ["redirect-to"],
+          "query": [
+            { "key": "status_code", "value": "302" },
+            { "key": "url", "value": "https://example.org/callback?code=PM-CODE-123&state=ok" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.request && pm.request.headers) {",
+              "  pm.request.headers.add({ key: 'X-BurpMan-NoRedirect', value: '1' });",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var loc = pm.response.headers.get('location');",
+              "pm.test('03 - got redirect location', function () { pm.expect(loc).to.include('code=PM-CODE-123'); });",
+              "var code = loc.split('?')[1].split('&').find(function(p){ return p.indexOf('code=') === 0; }).split('=')[1];",
+              "pm.environment.set('pm_flow_code', code);",
+              "pm.test('03 - code parsed', function () { pm.expect(code).to.equal('PM-CODE-123'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - form-urlencoded token-style exchange",
+      "request": {
+        "method": "POST",
+        "url": { "raw": "{{base_url}}/post", "host": ["{{base_url}}"], "path": ["post"] },
+        "header": [
+          { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "grant_type", "value": "authorization_code" },
+            { "key": "client_id", "value": "burpman-postman-test" },
+            { "key": "redirect_uri", "value": "app://callback" },
+            { "key": "code", "value": "{{pm_flow_code}}" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var form = pm.response.json().form;",
+              "pm.test('04 - grant_type passed', function () { pm.expect(form.grant_type).to.equal('authorization_code'); });",
+              "pm.test('04 - code carried from redirect parsing', function () { pm.expect(form.code).to.equal('PM-CODE-123'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - setNextRequest jump",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/get?stage=05",
+          "host": ["{{base_url}}"],
+          "path": ["get"],
+          "query": [{ "key": "stage", "value": "05" }]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('05 - status 200', function () { pm.expect(pm.response.code).to.equal(200); });",
+              "postman.setNextRequest('07 - jump target');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - SHOULD BE SKIPPED",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/status/418", "host": ["{{base_url}}"], "path": ["status", "418"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('06 should not run', function () { pm.expect(true).to.equal(false); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - jump target",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/get?stage=07",
+          "host": ["{{base_url}}"],
+          "path": ["get"],
+          "query": [{ "key": "stage", "value": "07" }]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('07 reached via setNextRequest', function () { pm.expect(pm.response.json().args.stage).to.equal('07'); });"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

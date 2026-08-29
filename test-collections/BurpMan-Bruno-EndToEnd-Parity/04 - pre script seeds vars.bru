@@ -1,0 +1,28 @@
+meta {
+  name: 04 - pre script seeds vars
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/get?stage=04&run={{bruno.run_id}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  bru.setEnvVar("bruno.run_id", "run-" + Date.now());
+  bru.setEnvVar("bruno.user", "user-" + Math.floor(Math.random() * 100000));
+  bru.setEnvVar("bruno.user_id", "42");
+}
+
+tests {
+  test("04 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("04 - run id interpolated", function() {
+    expect(res.getBody().args.run).to.match(/^run-\d+$/);
+  });
+}
+

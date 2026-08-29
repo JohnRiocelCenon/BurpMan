@@ -1,0 +1,34 @@
+meta {
+  name: 02 - response to env carryover
+  type: http
+  seq: 2
+}
+
+post {
+  url: https://httpbin.org/post
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "user": "{{bruno.user}}",
+    "run_id": "{{bruno.run_id}}"
+  }
+}
+
+tests {
+  test("02 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("02 - body interpolated from prior request vars", function() {
+    var echoed = JSON.parse(res.getBody().data);
+    expect(echoed.user).to.equal("bruno-smoke");
+    expect(echoed.run_id).to.match(/^run-\d+$/);
+  });
+}

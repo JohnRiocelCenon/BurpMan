@@ -1,0 +1,33 @@
+meta {
+  name: 05 - params path and query interpolation
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{base_url}}/anything/users/:userId
+  body: none
+  auth: none
+}
+
+params:path {
+  userId: {{bruno.user_id}}
+}
+
+params:query {
+  stage: 05
+  run: {{bruno.run_id}}
+}
+
+tests {
+  test("05 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("05 - path and query params applied", function() {
+    var body = res.getBody();
+    expect(body.url).to.include("/users/42");
+    expect(body.args.run).to.match(/^run-\d+$/);
+  });
+}
+

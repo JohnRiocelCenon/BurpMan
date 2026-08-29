@@ -1,0 +1,27 @@
+meta {
+  name: 16 - api key header request
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{base_url}}/headers?stage=16
+  body: none
+  auth: apikey
+}
+
+auth:apikey {
+  key: X-Api-Key
+  value: {{api_key}}
+  placement: header
+}
+
+tests {
+  test("16 - api key header applied", function() {
+    var h = res.getBody().headers || {};
+    var key = h["X-Api-Key"] || h["x-api-key"];
+    expect(res.getStatus()).to.equal(200);
+    expect(key).to.equal("BURPMAN-API-KEY-123");
+  });
+}
+

@@ -1,0 +1,37 @@
+meta {
+  name: 09 - graphql body and vars
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{base_url}}/post
+  body: graphql
+  auth: none
+}
+
+body:graphql {
+  query Demo($name: String!) { greeting(name: $name) }
+}
+
+body:graphql:vars {
+  {
+    "name": "{{graphql_name}}"
+  }
+}
+
+tests {
+  test("09 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("09 - graphql vars resolved", function() {
+    var payload = JSON.parse(res.getBody().data);
+    var vars = payload.variables;
+    if (typeof vars === "string") {
+      vars = JSON.parse(vars);
+    }
+    expect(vars.name).to.equal("BurpMan");
+  });
+}
+
