@@ -1,0 +1,32 @@
+meta {
+  name: 03 - redirect code extraction
+  type: http
+  seq: 3
+}
+
+get {
+  url: https://httpbin.org/redirect-to?status_code=302&url=https://example.org/callback?code=BRUNO-CODE-123&state=ok
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  req.setMaxRedirects(0);
+}
+
+tests {
+  test("03 - status is redirect", function() {
+    expect(res.getStatus()).to.equal(302);
+  });
+
+  test("03 - parse code from location header", function() {
+    var location = res.getHeader("location");
+    var code = location
+      .split("?")[1]
+      .split("&")
+      .find(function(part) { return part.indexOf("code=") === 0; })
+      .split("=")[1];
+    bru.setEnvVar("bruno.code", code);
+    expect(code).to.equal("BRUNO-CODE-123");
+  });
+}

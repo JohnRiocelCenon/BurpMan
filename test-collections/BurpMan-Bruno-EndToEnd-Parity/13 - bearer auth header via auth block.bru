@@ -1,0 +1,28 @@
+meta {
+  name: 13 - bearer auth header via auth block
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{base_url}}/headers?stage=13
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{static_jwt}}
+}
+
+tests {
+  test("13 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("13 - bearer auth applied", function() {
+    var h = res.getBody().headers || {};
+    var auth = h.Authorization || h.authorization || "";
+    expect(auth.indexOf("Bearer ")).to.equal(0);
+  });
+}
+

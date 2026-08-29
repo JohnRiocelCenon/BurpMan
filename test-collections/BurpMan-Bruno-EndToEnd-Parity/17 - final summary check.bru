@@ -1,0 +1,21 @@
+meta {
+  name: 17 - final summary check
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{base_url}}/get?user={{bruno.user}}&run={{bruno.run_id}}&code={{bruno.code}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("17 - chained vars still available", function() {
+    var args = res.getBody().args;
+    expect(res.getStatus()).to.equal(200);
+    expect(args.user).to.match(/^user-\d+$/);
+    expect(args.run).to.match(/^run-\d+$/);
+    expect(args.code).to.equal("BRUNO-CODE-321");
+  });
+}

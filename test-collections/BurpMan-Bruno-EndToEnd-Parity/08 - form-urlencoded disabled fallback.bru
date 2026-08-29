@@ -1,0 +1,35 @@
+meta {
+  name: 08 - form-urlencoded disabled fallback
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{base_url}}/post
+  body: formUrlEncoded
+  auth: none
+}
+
+headers {
+  Content-Type: application/x-www-form-urlencoded
+}
+
+body:form-urlencoded {
+  grant_type: authorization_code
+  client_id: burpman-bruno-test
+  code: {{bruno.code}}
+  ~code: SHOULD-NOT-WIN
+}
+
+tests {
+  test("08 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("08 - active code wins over disabled fallback", function() {
+    var form = res.getBody().form;
+    expect(form.code).to.equal("BRUNO-CODE-321");
+    expect(form.code).to.not.equal("SHOULD-NOT-WIN");
+  });
+}
+

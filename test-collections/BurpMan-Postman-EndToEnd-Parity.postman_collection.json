@@ -1,0 +1,1021 @@
+{
+  "info": {
+    "name": "BurpMan Postman End-to-End Parity",
+    "description": "Single collection to validate BurpMan end-to-end Postman parity: variable resolution, pre/post scripts, pm.sendRequest, redirect parsing, setNextRequest flow control, body modes, auth behavior, OAuth2 detection, and token-source detection.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.collectionVariables.set('collection_run_id', 'run-' + Date.now());",
+          "pm.collectionVariables.set('suite_name', 'burpman-postman-parity');"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://httpbin.org"
+    },
+    {
+      "key": "collection_run_id",
+      "value": ""
+    },
+    {
+      "key": "suite_name",
+      "value": "burpman-postman-parity"
+    },
+    {
+      "key": "mock_access_token",
+      "value": "BURPMAN-MOCK-TOKEN-XYZ"
+    },
+    {
+      "key": "oauth_client_id",
+      "value": "burpman-client"
+    },
+    {
+      "key": "oauth_client_secret",
+      "value": "burpman-secret"
+    },
+    {
+      "key": "oauth_scope",
+      "value": "burpman.read burpman.write"
+    },
+    {
+      "key": "static_jwt",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJidXJwbWFuIiwiZXhwIjoyNTM0MDIzMDA3OTl9.signature"
+    },
+    {
+      "key": "api_key",
+      "value": "BURPMAN-API-KEY-123"
+    },
+    {
+      "key": "graphql_name",
+      "value": "BurpMan"
+    },
+    {
+      "key": "seeded_user",
+      "value": ""
+    },
+    {
+      "key": "child_uuid",
+      "value": ""
+    },
+    {
+      "key": "redirect_code",
+      "value": ""
+    },
+    {
+      "key": "folder_seed",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Auth discovery seeds",
+      "item": [
+        {
+          "name": "00.1 - OAuth2 config seed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{oauth_client_id}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{oauth_client_secret}}"
+                },
+                {
+                  "key": "scope",
+                  "value": "{{oauth_scope}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/anything/oauth/token-config",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "anything",
+                "oauth",
+                "token-config"
+              ]
+            },
+            "auth": {
+              "type": "oauth2",
+              "oauth2": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "string"
+                },
+                {
+                  "key": "accessTokenUrl",
+                  "value": "{{base_url}}/response-headers?access_token={{mock_access_token}}&token_type=Bearer&expires_in=75",
+                  "type": "string"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{oauth_client_id}}",
+                  "type": "string"
+                },
+                {
+                  "key": "clientSecret",
+                  "value": "{{oauth_client_secret}}",
+                  "type": "string"
+                },
+                {
+                  "key": "scope",
+                  "value": "{{oauth_scope}}",
+                  "type": "string"
+                },
+                {
+                  "key": "client_authentication",
+                  "value": "body",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('00.1 - status 200', function () { pm.expect(pm.response.code).to.equal(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "00.2 - JWT token source mock",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{oauth_client_id}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{oauth_client_secret}}"
+                },
+                {
+                  "key": "scope",
+                  "value": "{{oauth_scope}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/response-headers?access_token={{mock_access_token}}&token_type=Bearer&expires_in=75",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "response-headers"
+              ],
+              "query": [
+                {
+                  "key": "access_token",
+                  "value": "{{mock_access_token}}"
+                },
+                {
+                  "key": "token_type",
+                  "value": "Bearer"
+                },
+                {
+                  "key": "expires_in",
+                  "value": "75"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var j = pm.response.json();",
+                  "pm.test('00.2 - token fields present', function () {",
+                  "  pm.expect(j.access_token).to.equal(pm.collectionVariables.get('mock_access_token'));",
+                  "  pm.expect(j.token_type).to.equal('Bearer');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "00.3 - static bearer header seed",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{static_jwt}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/headers?stage=00.3",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "headers"
+              ],
+              "query": [
+                {
+                  "key": "stage",
+                  "value": "00.3"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var h = pm.response.json().headers || {};",
+                  "var auth = h.Authorization || h.authorization || '';",
+                  "pm.test('00.3 - explicit bearer header resolved', function () { pm.expect(auth).to.include('Bearer '); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 - Runtime parity",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.environment.set('folder_seed', 'folder-' + Date.now());"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "01.1 - pre script seeds vars",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/get?stage=01.1&run={{collection_run_id}}&folder={{folder_seed}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "get"
+              ],
+              "query": [
+                {
+                  "key": "stage",
+                  "value": "01.1"
+                },
+                {
+                  "key": "run",
+                  "value": "{{collection_run_id}}"
+                },
+                {
+                  "key": "folder",
+                  "value": "{{folder_seed}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('seeded_user', 'user-' + Math.floor(Math.random() * 100000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var j = pm.response.json();",
+                  "pm.test('01.1 - status 200', function () { pm.expect(pm.response.code).to.equal(200); });",
+                  "pm.test('01.1 - collection/folder vars resolved', function () {",
+                  "  pm.expect(j.args.run).to.match(/^run-\\d+$/);",
+                  "  pm.expect(j.args.folder).to.match(/^folder-\\d+$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01.2 - raw JSON interpolation + dynamic vars",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Run",
+                "value": "{{collection_run_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user\":\"{{seeded_user}}\",\"run\":\"{{collection_run_id}}\",\"suite\":\"{{suite_name}}\",\"ts\":\"{{$timestamp}}\"}"
+            },
+            "url": {
+              "raw": "{{base_url}}/post?stage=01.2&user={{seeded_user}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "post"
+              ],
+              "query": [
+                {
+                  "key": "stage",
+                  "value": "01.2"
+                },
+                {
+                  "key": "user",
+                  "value": "{{seeded_user}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var j = pm.response.json();",
+                  "var body = JSON.parse(j.data);",
+                  "pm.test('01.2 - URL/header/body variables resolved', function () {",
+                  "  pm.expect(j.args.user).to.match(/^user-\\d+$/);",
+                  "  pm.expect(j.headers['X-Run']).to.match(/^run-\\d+$/);",
+                  "  pm.expect(body.user).to.match(/^user-\\d+$/);",
+                  "  pm.expect(body.suite).to.equal('burpman-postman-parity');",
+                  "  pm.expect(String(body.ts)).to.match(/^\\d+$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01.3 - pm.sendRequest callback writes env",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/get?stage=01.3&uuid={{child_uuid}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "get"
+              ],
+              "query": [
+                {
+                  "key": "stage",
+                  "value": "01.3"
+                },
+                {
+                  "key": "uuid",
+                  "value": "{{child_uuid}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.sendRequest('{{base_url}}/uuid', function (err, res) {",
+                  "  if (!err && res) {",
+                  "    var data = res.json();",
+                  "    pm.environment.set('child_uuid', data.uuid);",
+                  "  }",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var uuid = pm.environment.get('child_uuid');",
+                  "pm.test('01.3 - callback set uuid', function () { pm.expect(uuid).to.match(/^[0-9a-f-]{36}$/); });",
+                  "pm.test('01.3 - request used callback uuid', function () { pm.expect(pm.response.json().args.uuid).to.equal(uuid); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01.4 - redirect code extraction",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/redirect-to?status_code=302&url=https://example.org/callback?code=BM-CODE-321&state=ok",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "redirect-to"
+              ],
+              "query": [
+                {
+                  "key": "status_code",
+                  "value": "302"
+                },
+                {
+                  "key": "url",
+                  "value": "https://example.org/callback?code=BM-CODE-321&state=ok"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.request && pm.request.headers) {",
+                  "  pm.request.headers.add({ key: 'X-BurpMan-NoRedirect', value: '1' });",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var loc = pm.response.headers.get('location');",
+                  "var codePart = loc.split('?')[1].split('&').find(function (p) { return p.indexOf('code=') === 0; });",
+                  "var code = codePart.split('=')[1];",
+                  "pm.environment.set('redirect_code', code);",
+                  "pm.test('01.4 - redirect code parsed', function () { pm.expect(code).to.equal('BM-CODE-321'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01.5 - form-urlencoded disabled fallback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "authorization_code"
+                },
+                {
+                  "key": "client_id",
+                  "value": "burpman-postman-test"
+                },
+                {
+                  "key": "code",
+                  "value": "{{redirect_code}}"
+                },
+                {
+                  "key": "code",
+                  "value": "SHOULD-NOT-WIN",
+                  "disabled": true
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/post",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "post"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var form = pm.response.json().form;",
+                  "pm.test('01.5 - active code wins over disabled fallback', function () {",
+                  "  pm.expect(form.code).to.equal('BM-CODE-321');",
+                  "  pm.expect(form.code).to.not.equal('SHOULD-NOT-WIN');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01.6 - multipart form text fields",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "note",
+                  "value": "hello-{{seeded_user}}",
+                  "type": "text"
+                },
+                {
+                  "key": "run",
+                  "value": "{{collection_run_id}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/post",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "post"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var form = pm.response.json().form;",
+                  "pm.test('01.6 - multipart text fields resolved', function () {",
+                  "  pm.expect(form.note).to.match(/^hello-user-\\d+$/);",
+                  "  pm.expect(form.run).to.match(/^run-\\d+$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01.7 - GraphQL body + variables interpolation",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query Demo($name: String!) { greeting(name: $name) }",
+                "variables": "{\"name\":\"{{graphql_name}}\"}"
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/post",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "post"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var payload = JSON.parse(pm.response.json().data);",
+                  "var vars = payload.variables;",
+                  "if (typeof vars === 'string') { vars = JSON.parse(vars); }",
+                  "pm.test('01.7 - GraphQL variables resolved', function () {",
+                  "  pm.expect(vars.name).to.equal('BurpMan');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01.8 - setNextRequest jump controller",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/get?stage=01.8",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "get"
+              ],
+              "query": [
+                {
+                  "key": "stage",
+                  "value": "01.8"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('01.8 - status 200', function () { pm.expect(pm.response.code).to.equal(200); });",
+                  "postman.setNextRequest('01.10 - jump target');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01.9 - SHOULD BE SKIPPED",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/status/418",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "status",
+                "418"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('01.9 should never run', function () { pm.expect(true).to.equal(false); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01.10 - jump target",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/get?stage=01.10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "get"
+              ],
+              "query": [
+                {
+                  "key": "stage",
+                  "value": "01.10"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('01.10 - reached via setNextRequest', function () { pm.expect(pm.response.json().args.stage).to.equal('01.10'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Auth behavior parity",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{static_jwt}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "02.1 - inherited bearer visible in headers",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/headers?stage=02.1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "headers"
+              ],
+              "query": [
+                {
+                  "key": "stage",
+                  "value": "02.1"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var h = pm.response.json().headers || {};",
+                  "var auth = h.Authorization || h.authorization || '';",
+                  "pm.test('02.1 - inherited bearer applied', function () { pm.expect(auth).to.include('Bearer '); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02.2 - noauth override removes inherited bearer",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{base_url}}/headers?stage=02.2",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "headers"
+              ],
+              "query": [
+                {
+                  "key": "stage",
+                  "value": "02.2"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var h = pm.response.json().headers || {};",
+                  "var auth = h.Authorization || h.authorization;",
+                  "pm.test('02.2 - noauth override removed bearer', function () { pm.expect(auth).to.equal(undefined); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02.3 - basic auth request",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "demo-user",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "demo-pass",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/basic-auth/demo-user/demo-pass",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "basic-auth",
+                "demo-user",
+                "demo-pass"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var j = pm.response.json();",
+                  "pm.test('02.3 - basic auth works', function () {",
+                  "  pm.expect(j.authenticated).to.equal(true);",
+                  "  pm.expect(j.user).to.equal('demo-user');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02.4 - api key auth header",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "X-Api-Key",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "{{api_key}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/headers?stage=02.4",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "headers"
+              ],
+              "query": [
+                {
+                  "key": "stage",
+                  "value": "02.4"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var h = pm.response.json().headers || {};",
+                  "pm.test('02.4 - api key header applied', function () {",
+                  "  pm.expect(h['X-Api-Key'] || h['x-api-key']).to.equal('BURPMAN-API-KEY-123');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02.5 - bearer endpoint accepts inherited token",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/bearer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "bearer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var j = pm.response.json();",
+                  "pm.test('02.5 - inherited token accepted', function () {",
+                  "  pm.expect(j.authenticated).to.equal(true);",
+                  "  pm.expect(j.token).to.equal(pm.collectionVariables.get('static_jwt'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Final summary check",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "noauth"
+        },
+        "url": {
+          "raw": "{{base_url}}/get?user={{seeded_user}}&uuid={{child_uuid}}&code={{redirect_code}}&run={{collection_run_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "get"
+          ],
+          "query": [
+            {
+              "key": "user",
+              "value": "{{seeded_user}}"
+            },
+            {
+              "key": "uuid",
+              "value": "{{child_uuid}}"
+            },
+            {
+              "key": "code",
+              "value": "{{redirect_code}}"
+            },
+            {
+              "key": "run",
+              "value": "{{collection_run_id}}"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var a = pm.response.json().args;",
+              "pm.test('03 - seeded_user persisted', function () { pm.expect(a.user).to.match(/^user-\\d+$/); });",
+              "pm.test('03 - child uuid persisted', function () { pm.expect(a.uuid).to.match(/^[0-9a-f-]{36}$/); });",
+              "pm.test('03 - redirect code persisted', function () { pm.expect(a.code).to.equal('BM-CODE-321'); });",
+              "pm.test('03 - run id persisted', function () { pm.expect(a.run).to.match(/^run-\\d+$/); });"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

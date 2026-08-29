@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.burpman</groupId>
+    <artifactId>BurpManRevamped</artifactId>
+    <version>2.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>BurpManRevamped</name>
+    <description>Postman + Bruno super-app inside Burp Suite — collection import, scripts, full auth coverage, code generation, OpenAPI import, data-driven runs. Revamped release: V8-faithful script semantics, sandboxed script execution, single-engine runtime, and a real regression suite.</description>
+    <url>https://github.com/JohnRiocelCenon/BurpMan</url>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>JohnRiocelCenon</id>
+            <name>John Riocel Cenon</name>
+            <url>https://github.com/JohnRiocelCenon</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/JohnRiocelCenon/BurpMan.git</connection>
+        <developerConnection>scm:git:https://github.com/JohnRiocelCenon/BurpMan.git</developerConnection>
+        <url>https://github.com/JohnRiocelCenon/BurpMan</url>
+    </scm>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Default flavor: lite (Rhino only, no extras). Override with -Pfull. -->
+        <extras.scope>provided</extras.scope>
+        <jar.classifier>lite</jar.classifier>
+        <junit.version>5.10.2</junit.version>
+    </properties>
+
+    <profiles>
+        <profile>
+            <id>full</id>
+            <properties>
+                <!-- Bundles every optional dependency so advanced features
+                     (syntax highlighting, AWS SigV4 / EdgeGrid signing,
+                     OpenAPI import) work out of the box. Rhino is bundled in
+                     BOTH flavors — it is the sole script engine. -->
+                <extras.scope>compile</extras.scope>
+                <jar.classifier>full</jar.classifier>
+            </properties>
+        </profile>
+    </profiles>
+
+    <dependencies>
+        <!-- Montoya API -->
+        <dependency>
+            <groupId>net.portswigger.burp.extensions</groupId>
+            <artifactId>montoya-api</artifactId>
+            <version>2023.12.1</version>
+            <scope>provided</scope>
+        </dependency>
+        
+        <!-- Gson for JSON parsing -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.10.1</version>
+        </dependency>
+
+        <!--
+            Mozilla Rhino — the sole JavaScript engine, bundled in every
+            flavor. ~1.5 MB, pure-Java, and the only engine that works
+            reliably inside Burp's extension classloader (which does not
+            honour META-INF/services from shaded jars, so JSR-223 lookup
+            of Nashorn/GraalJS silently returns null).
+        -->
+        <dependency>
+            <groupId>org.mozilla</groupId>
+            <artifactId>rhino</artifactId>
+            <version>1.7.15.1</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- ============================================================
+             OPTIONAL EXTRAS (only bundled with -Pfull)
+             Probed at runtime via Class.forName so the lite build
+             degrades gracefully instead of throwing NoClassDefFoundError.
+             ============================================================ -->
+
+        <!-- Apache Commons Codec — Base64URL, hex, percent-encoding for AWS
+             SigV4, OAuth1 signature base string, EdgeGrid HMAC. ~400 KB. -->
+        <dependency>
+            <groupId>commons-codec</groupId>
+            <artifactId>commons-codec</artifactId>
+            <version>1.17.1</version>
+            <scope>${extras.scope}</scope>
+        </dependency>
+
+        <!-- RSyntaxTextArea — Postman-quality syntax highlighting for
+             body editors (JSON/XML) + pre/post script tabs (JavaScript).
+             ~1.3 MB. Probed via Class.forName so the lite build silently
+             falls back to plain JTextArea. -->
+        <dependency>
+            <groupId>com.fifesoft</groupId>
+            <artifactId>rsyntaxtextarea</artifactId>
+            <version>3.5.0</version>
+            <scope>${extras.scope}</scope>
+        </dependency>
+
+        <!-- ============================================================
+             TEST-ONLY
+             ============================================================ -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <!-- Java 11 minimum: Burp Suite 2022+ ships JDK 11/17/21. -->
+                    <release>11</release>
+                    <compilerArgs>
+                        <!-- Every warning category is enabled except two that
+                             produce noise rather than signal here:
+                               serial      — Swing components are subclassed
+                                             throughout the UI and are never
+                                             serialised; the JDK's own Swing
+                                             classes trigger the same warning.
+                               this-escape — JDK 21+ only, and fires on the
+                                             conventional Swing pattern of
+                                             registering listeners from a
+                                             constructor.
+                             Everything else must stay at zero. -->
+                        <arg>-Xlint:all,-serial,-this-escape</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <!-- Regression suite guards script semantics, the sandbox,
+                         and parser round-trips. Never skip it in CI. -->
+                    <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
+                </configuration>
+            </plugin>
+            
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                    <archive>
+                        <manifest>
+                            <addClasspath>true</addClasspath>
+                        </manifest>
+                    </archive>
+                    <!-- Output: BurpManRevamped-2.0.0-{lite|full}-jar-with-dependencies.jar -->
+                    <finalName>${project.artifactId}-${project.version}-${jar.classifier}</finalName>
+                    <appendAssemblyId>true</appendAssemblyId>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-assembly</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

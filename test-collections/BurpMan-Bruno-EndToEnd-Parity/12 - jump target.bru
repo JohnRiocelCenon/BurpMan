@@ -1,0 +1,19 @@
+meta {
+  name: 12 - jump target
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{base_url}}/get?stage=12
+  body: none
+  auth: none
+}
+
+tests {
+  test("12 - reached via setNextRequest", function() {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().args.stage).to.equal("12");
+  });
+}
+

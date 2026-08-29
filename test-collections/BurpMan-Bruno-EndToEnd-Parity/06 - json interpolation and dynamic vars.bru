@@ -1,0 +1,39 @@
+meta {
+  name: 06 - json interpolation and dynamic vars
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/post
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "user": "{{bruno.user}}",
+    "run": "{{bruno.run_id}}",
+    "suite": "{{suite_name}}",
+    "ts": "{{$timestamp}}"
+  }
+}
+
+tests {
+  test("06 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("06 - body variables resolved", function() {
+    var payload = JSON.parse(res.getBody().data);
+    expect(payload.user).to.match(/^user-\d+$/);
+    expect(payload.run).to.match(/^run-\d+$/);
+    expect(payload.suite).to.equal("burpman-bruno-parity");
+    expect(String(payload.ts)).to.match(/^\d+$/);
+  });
+}
+
