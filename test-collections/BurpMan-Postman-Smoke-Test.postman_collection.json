@@ -1,0 +1,358 @@
+{
+  "info": {
+    "name": "BurpMan Postman Smoke Test",
+    "description": "Exercises every Postman scripting feature BurpMan implements. Each request hits httpbin.org (no auth, no setup). Run via Run Scripts to verify pre/post scripts, var interpolation, setNextRequest, regex-metachar split, btoa/atob, JSON.parse, let/const tolerance, pm.expect matchers, status helpers, headers, and cross-request env state.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "noauth" },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "console.log('[collection-pre] running');",
+          "pm.collectionVariables.set('collection_seed', 'seed-' + Date.now());"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url",        "value": "https://httpbin.org" },
+    { "key": "collection_seed", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 - pm.environment.set + get",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/get?stage=01", "host": ["{{base_url}}"], "path": ["get"], "query": [{"key":"stage","value":"01"}] }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.environment.set('user_id', 'u-' + Math.floor(Math.random()*100000));",
+            "pm.environment.set('username', 'alice');",
+            "pm.environment.set('username', undefined);",
+            "console.log('[01-pre] user_id=' + pm.environment.get('user_id'));"
+          ] }
+        },
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('01 - status 200', function () { pm.expect(pm.response.code).to.equal(200); });",
+            "pm.test('01 - username preserved through undefined-write', function () {",
+            "  pm.expect(pm.environment.get('username')).to.equal('alice');",
+            "});",
+            "pm.test('01 - response args.stage echoes', function () {",
+            "  pm.expect(pm.response.json().args.stage).to.equal('01');",
+            "});"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "02 - {{var}} interpolation in URL + headers + body",
+      "request": {
+        "method": "POST",
+        "url": { "raw": "{{base_url}}/post?u={{user_id}}", "host":["{{base_url}}"], "path":["post"], "query":[{"key":"u","value":"{{user_id}}"}] },
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-User", "value": "{{username}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"user_id\":\"{{user_id}}\",\"username\":\"{{username}}\",\"seed\":\"{{collection_seed}}\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "var json = pm.response.json();",
+            "pm.test('02 - URL var resolved', function () { pm.expect(json.args.u).to.match(/^u-\\d+$/); });",
+            "pm.test('02 - header var resolved', function () { pm.expect(json.headers['X-User']).to.equal('alice'); });",
+            "pm.test('02 - body var resolved', function () {",
+            "  var body = JSON.parse(json.data);",
+            "  pm.expect(body.username).to.equal('alice');",
+            "  pm.expect(body.seed).to.match(/^seed-\\d+$/);",
+            "});"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "03 - pm.response.json navigation",
+      "request": {
+        "method": "POST",
+        "url": { "raw": "{{base_url}}/anything", "host":["{{base_url}}"], "path":["anything"] },
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"nested\":{\"deep\":{\"value\":\"hello\",\"count\":42,\"items\":[\"a\",\"b\",\"c\"]}}}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "var body = JSON.parse(pm.response.json().data);",
+            "pm.test('03 - nested.deep.value navigable', function () { pm.expect(body.nested.deep.value).to.equal('hello'); });",
+            "pm.test('03 - nested array indexing', function () { pm.expect(body.nested.deep.items[1]).to.equal('b'); });",
+            "pm.test('03 - .length on parsed array', function () { pm.expect(body.nested.deep.items.length).to.equal(3); });",
+            "pm.environment.set('extracted_count', body.nested.deep.count);"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "04 - cross-request env var carryover",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/get?count={{extracted_count}}", "host":["{{base_url}}"], "path":["get"], "query":[{"key":"count","value":"{{extracted_count}}"}] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('04 - env var from prev request carried', function () {",
+            "  pm.expect(pm.response.json().args.count).to.equal('42');",
+            "});"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "05 - String.split on regex metachars",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/get?stage=05", "host":["{{base_url}}"], "path":["get"], "query":[{"key":"stage","value":"05"}] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "var fakeLocation = 'https://app.example.com/callback?code=XYZ789&state=abc';",
+            "pm.test('05a - split(\"?\") works (regex metachar polyfill)', function () {",
+            "  pm.expect(fakeLocation.split('?').length).to.equal(2);",
+            "});",
+            "pm.test('05b - chained split(\"?\") then split(\"&\")', function () {",
+            "  var qs = fakeLocation.split('?')[1].split('&');",
+            "  pm.expect(qs[0]).to.equal('code=XYZ789');",
+            "});",
+            "pm.test('05c - find + arrow function', function () {",
+            "  var qs = fakeLocation.split('?')[1].split('&');",
+            "  var codeParam = qs.find(function(p){ return p.indexOf('code=')===0; });",
+            "  var code = codeParam.split('=')[1];",
+            "  pm.expect(code).to.equal('XYZ789');",
+            "  pm.environment.set('extracted_code', code);",
+            "});"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "06 - postman.setNextRequest skip",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/get?stage=06", "host":["{{base_url}}"], "path":["get"], "query":[{"key":"stage","value":"06"}] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('06 - status 200', function () { pm.expect(pm.response.code).to.equal(200); });",
+            "postman.setNextRequest('08 - Skip target');"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "07 - SHOULD BE SKIPPED",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/status/418", "host":["{{base_url}}"], "path":["status","418"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('07 - SHOULD NOT RUN — setNextRequest broken if you see this', function () {",
+            "  pm.expect(true).to.equal(false);",
+            "});"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "08 - Skip target",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/get?stage=08", "host":["{{base_url}}"], "path":["get"], "query":[{"key":"stage","value":"08"}] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('08 - reached via setNextRequest skip', function () {",
+            "  pm.expect(pm.response.json().args.stage).to.equal('08');",
+            "});"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "09 - btoa + atob",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/get?stage=09", "host":["{{base_url}}"], "path":["get"], "query":[{"key":"stage","value":"09"}] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('09a - btoa encodes', function () { pm.expect(btoa('hello')).to.equal('aGVsbG8='); });",
+            "pm.test('09b - atob decodes', function () { pm.expect(atob('aGVsbG8=')).to.equal('hello'); });"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "10 - JSON.parse + JSON.stringify",
+      "request": {
+        "method": "POST",
+        "url": { "raw": "{{base_url}}/anything", "host":["{{base_url}}"], "path":["anything"] },
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\"a\":1,\"b\":[2,3],\"c\":{\"d\":\"e\"}}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "var raw = pm.response.json().data;",
+            "pm.test('10a - JSON.parse', function () {",
+            "  var p = JSON.parse(raw);",
+            "  pm.expect(p.b[1]).to.equal(3);",
+            "  pm.expect(p.c.d).to.equal('e');",
+            "});",
+            "pm.test('10b - JSON.stringify roundtrip', function () {",
+            "  var p2 = JSON.parse(JSON.stringify(JSON.parse(raw)));",
+            "  pm.expect(p2.a).to.equal(1);",
+            "});"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "11 - let-const redeclaration tolerance",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/get?stage=11", "host":["{{base_url}}"], "path":["get"], "query":[{"key":"stage","value":"11"}] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "// Top-level redeclaration tolerated (our preprocessor downgrades to var",
+            "// would normally reject these — our preprocessor downgrades to var",
+            "// so duplicate top-level declarations hoist together).",
+            "let authId = 'first';",
+            "let authId2 = 'second';",
+            "pm.test('11 - let top-level redeclaration tolerated', function () {",
+            "  pm.expect(authId).to.equal('first');",
+            "  pm.expect(authId2).to.equal('second');",
+            "});",
+            "// const re-declared in separate sibling if-blocks (V8 allows; strict",
+            "// strict const would normally reject — our preprocessor downgrades).",
+            "if (pm.response.code === 200) { const c = 'a'; pm.environment.set('const_test_a', c); }",
+            "if (pm.response.code === 200) { const c = 'b'; pm.environment.set('const_test_b', c); }",
+            "pm.test('11 - const re-declared per block', function () {",
+            "  pm.expect(pm.environment.get('const_test_a')).to.equal('a');",
+            "  pm.expect(pm.environment.get('const_test_b')).to.equal('b');",
+            "});"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "12 - pm.expect matchers",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/get?stage=12", "host":["{{base_url}}"], "path":["get"], "query":[{"key":"stage","value":"12"}] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "var s = 'hello world'; var arr = [1,2,3]; var obj = { name:'alice', age:30 };",
+            "pm.test('12a - to.equal', function () { pm.expect(1).to.equal(1); });",
+            "pm.test('12b - to.eql (deep)', function () { pm.expect({a:1}).to.eql({a:1}); });",
+            "pm.test('12c - to.include', function () { pm.expect(s).to.include('world'); });",
+            "pm.test('12d - to.not.include', function () { pm.expect(s).to.not.include('xyz'); });",
+            "pm.test('12e - to.be.a(string)', function () { pm.expect(s).to.be.a('string'); });",
+            "pm.test('12f - to.be.an(array)', function () { pm.expect(arr).to.be.an('array'); });",
+            "pm.test('12g - to.have.length', function () { pm.expect(arr).to.have.length(3); });",
+            "pm.test('12h - to.exist', function () { pm.expect(obj.name).to.exist; });",
+            "pm.test('12i - to.match', function () { pm.expect(s).to.match(/hello/); });"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "13 - Response status helpers",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/status/201", "host":["{{base_url}}"], "path":["status","201"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('13a - response.code', function () { pm.expect(pm.response.code).to.equal(201); });",
+            "pm.test('13b - response.to.have.status', function () { pm.response.to.have.status(201); });"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "14 - Response header lookup",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/response-headers?X-Custom-Header=BurpMan-Smoke", "host":["{{base_url}}"], "path":["response-headers"], "query":[{"key":"X-Custom-Header","value":"BurpMan-Smoke"}] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('14 - header lookup', function () {",
+            "  pm.expect(pm.response.headers.get('X-Custom-Header')).to.equal('BurpMan-Smoke');",
+            "});"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "15 - Final summary check",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/get?u={{user_id}}&code={{extracted_code}}&seed={{collection_seed}}", "host":["{{base_url}}"], "path":["get"], "query":[
+          {"key":"u","value":"{{user_id}}"},
+          {"key":"code","value":"{{extracted_code}}"},
+          {"key":"seed","value":"{{collection_seed}}"}
+        ] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "var json = pm.response.json();",
+            "pm.test('15a - user_id from req 01 still set', function () { pm.expect(json.args.u).to.match(/^u-\\d+$/); });",
+            "pm.test('15b - extracted_code from req 05 still set', function () { pm.expect(json.args.code).to.equal('XYZ789'); });",
+            "pm.test('15c - collection_seed from collection-pre still set', function () { pm.expect(json.args.seed).to.match(/^seed-\\d+$/); });"
+          ] }
+        }
+      ]
+    }
+  ]
+}

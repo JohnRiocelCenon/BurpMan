@@ -1,0 +1,17 @@
+meta {
+  name: 06 - SHOULD BE SKIPPED
+  type: http
+  seq: 6
+}
+
+get {
+  url: https://httpbin.org/status/418
+  body: none
+  auth: none
+}
+
+tests {
+  test("06 should not run", function() {
+    expect(true).to.equal(false);
+  });
+}

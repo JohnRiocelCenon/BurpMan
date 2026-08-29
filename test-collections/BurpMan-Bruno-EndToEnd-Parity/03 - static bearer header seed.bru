@@ -1,0 +1,28 @@
+meta {
+  name: 03 - static bearer header seed
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/headers?stage=03
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{static_jwt}}
+}
+
+tests {
+  test("03 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("03 - explicit bearer header resolved", function() {
+    var h = res.getBody().headers || {};
+    var auth = h.Authorization || h.authorization || "";
+    expect(auth.indexOf("Bearer ")).to.equal(0);
+  });
+}
+

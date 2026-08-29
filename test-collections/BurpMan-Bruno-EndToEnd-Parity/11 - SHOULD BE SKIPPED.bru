@@ -1,0 +1,18 @@
+meta {
+  name: 11 - SHOULD BE SKIPPED
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{base_url}}/status/418
+  body: none
+  auth: none
+}
+
+tests {
+  test("11 should not run", function() {
+    expect(true).to.equal(false);
+  });
+}
+

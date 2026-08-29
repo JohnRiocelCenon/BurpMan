@@ -1,0 +1,24 @@
+meta {
+  name: 14 - noauth request
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{base_url}}/headers?stage=14
+  body: none
+  auth: none
+}
+
+tests {
+  test("14 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("14 - authorization header absent", function() {
+    var h = res.getBody().headers || {};
+    var auth = h.Authorization || h.authorization;
+    expect(auth === undefined || auth === null).to.equal(true);
+  });
+}
+

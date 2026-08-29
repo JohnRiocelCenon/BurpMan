@@ -1,0 +1,9 @@
+{
+  "vars": {
+    "base_url": "https://httpbin.org",
+    "suite_name": "burpman-bruno-smoke",
+    "bruno.run_id": "",
+    "bruno.user": "bruno-smoke",
+    "bruno.code": "BRUNO-CODE-123"
+  }
+}

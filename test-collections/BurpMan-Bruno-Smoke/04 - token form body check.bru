@@ -1,0 +1,35 @@
+meta {
+  name: 04 - token form body check
+  type: http
+  seq: 4
+}
+
+post {
+  url: https://httpbin.org/post
+  body: formUrlEncoded
+  auth: none
+}
+
+headers {
+  Content-Type: application/x-www-form-urlencoded
+}
+
+body:form-urlencoded {
+  grant_type: authorization_code
+  client_id: burpman-bruno-test
+  redirect_uri: app://callback
+  code: {{bruno.code}}
+  ~code: DISABLED-FALLBACK-MUST-NOT-WIN
+}
+
+tests {
+  test("04 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("04 - active code kept, disabled fallback ignored", function() {
+    var form = res.getBody().form;
+    expect(form.code).to.equal("BRUNO-CODE-123");
+    expect(form.code).to.not.equal("DISABLED-FALLBACK-MUST-NOT-WIN");
+  });
+}

@@ -1,0 +1,18 @@
+meta {
+  name: 07 - jump target
+  type: http
+  seq: 7
+}
+
+get {
+  url: https://httpbin.org/get?stage=07
+  body: none
+  auth: none
+}
+
+tests {
+  test("07 - reached via setNextRequest", function() {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().args.stage).to.equal("07");
+  });
+}

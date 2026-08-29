@@ -1,0 +1,53 @@
+# Build output
+target/
+*.class
+*.jar
+
+# IDE — IntelliJ / Eclipse / VS Code
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.classpath
+.project
+.settings/
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and tmp
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Maven
+.mvn/
+mvnw
+mvnw.cmd
+
+# Environment / local config
+.env
+.env.local
+*.local
+
+# Local working folders
+release-assets/
+screenshots/_raw/
+*.py
+
+# Release artifacts and build/recovery folders — do not commit
+bin/
+tmp/
+workspaces/
+*.zip
+*.docx
+*.class
+
+# Any local .env anywhere in the tree (belt-and-braces)
+**/.env
+**/.env.*
+

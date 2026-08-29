@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.burpman</groupId>
+    <artifactId>BurpMan</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>BurpMan</name>
+    <description>Postman + Bruno super-app inside Burp Suite — collection import, scripts, full auth coverage, code generation, OpenAPI import, data-driven runs.</description>
+    <url>https://github.com/JohnRiocelCenon/BurpMan</url>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>JohnRiocelCenon</id>
+            <name>John Riocel Cenon</name>
+            <url>https://github.com/JohnRiocelCenon</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/JohnRiocelCenon/BurpMan.git</connection>
+        <developerConnection>scm:git:https://github.com/JohnRiocelCenon/BurpMan.git</developerConnection>
+        <url>https://github.com/JohnRiocelCenon/BurpMan</url>
+    </scm>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Default flavor: lite (Rhino only, no extras). Override with -Pfull. -->
+        <rhino.scope>compile</rhino.scope>
+        <extras.scope>provided</extras.scope>
+        <jar.classifier>lite</jar.classifier>
+    </properties>
+
+    <profiles>
+        <profile>
+            <id>full</id>
+            <properties>
+                <!-- Bundles Mozilla Rhino + every super-app dependency so
+                     real-world Postman scripts (closures, destructuring,
+                     template literals, pm.sendRequest callback chains) and
+                     advanced features (OpenAPI import, AWS SigV4, NTLM,
+                     WebSocket, gRPC, mock server, Bruno git mode) all run
+                     out of the box. -->
+                <rhino.scope>compile</rhino.scope>
+                <extras.scope>compile</extras.scope>
+                <jar.classifier>full</jar.classifier>
+            </properties>
+        </profile>
+    </profiles>
+
+    <dependencies>
+        <!-- Montoya API -->
+        <dependency>
+            <groupId>net.portswigger.burp.extensions</groupId>
+            <artifactId>montoya-api</artifactId>
+            <version>2023.12.1</version>
+            <scope>provided</scope>
+        </dependency>
+        
+        <!-- Gson for JSON parsing -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.10.1</version>
+        </dependency>
+
+        <!--
+            Mozilla Rhino — bundled in both lite and full builds.
+            ~1.5 MB, pure-Java, works inside Burp's extension classloader.
+            Lite keeps this as the only JS engine so startup stays smaller
+            than full while avoiding NoClassDefFoundError in script paths.
+        -->
+        <dependency>
+            <groupId>org.mozilla</groupId>
+            <artifactId>rhino</artifactId>
+            <version>1.7.15.1</version>
+            <scope>${rhino.scope}</scope>
+        </dependency>
+
+        <!--
+            Nashorn standalone — primary JavaScript engine. ~2.5 MB total
+            (nashorn-core + asm). Removed from the JDK in 15+ but still
+            actively published on Maven Central by the OpenJDK Nashorn
+            project. Supports ES2017: closures, classes, async/await,
+            destructuring, template literals, Symbol, Map, Set, generators.
+
+            Gaps vs ES2022 are minor for Postman/Bruno scripts: optional
+            chaining `?.` and nullish coalescing `??` aren't native. Our
+            RhinoScriptEngine's preprocessor already rewrites them when
+            Rhino is used as the fallback path.
+        -->
+        <dependency>
+            <groupId>org.openjdk.nashorn</groupId>
+            <artifactId>nashorn-core</artifactId>
+            <version>15.7</version>
+            <scope>${extras.scope}</scope>
+        </dependency>
+
+        <!-- ============================================================
+             SUPER-APP EXTRAS (only bundled with -Pfull)
+             Kept to the bare minimum so the JAR stays small (~6 MB).
+             Heavy deps (GraalJS, gRPC, Jetty, JGit, BouncyCastle, ...)
+             were removed because they crash Burp's extension classloader
+             or bloat the jar above the 6 MB budget.
+             ============================================================ -->
+
+        <!-- Apache Commons Codec — Base64URL, hex, percent-encoding for AWS
+             SigV4, OAuth1 signature base string, EdgeGrid HMAC. ~400 KB. -->
+        <dependency>
+            <groupId>commons-codec</groupId>
+            <artifactId>commons-codec</artifactId>
+            <version>1.17.1</version>
+            <scope>${extras.scope}</scope>
+        </dependency>
+
+        <!-- RSyntaxTextArea — Postman-quality syntax highlighting for
+             body editors (JSON/XML) + pre/post script tabs (JavaScript).
+             ~1.3 MB. Probed via Class.forName so the lite build silently
+             falls back to plain JTextArea. -->
+        <dependency>
+            <groupId>com.fifesoft</groupId>
+            <artifactId>rsyntaxtextarea</artifactId>
+            <version>3.5.0</version>
+            <scope>${extras.scope}</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <!-- Java 11 minimum: Nashorn standalone needs Java 11+,
+                         and Burp Suite 2022+ ships with JDK 11/17/21. -->
+                    <source>11</source>
+                    <target>11</target>
+                    <release>11</release>
+                </configuration>
+            </plugin>
+            
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                    <archive>
+                        <manifest>
+                            <addClasspath>true</addClasspath>
+                        </manifest>
+                    </archive>
+                    <!-- Output: BurpMan-1.0.0-{lite|full}-jar-with-dependencies.jar -->
+                    <finalName>${project.artifactId}-${project.version}-${jar.classifier}</finalName>
+                    <appendAssemblyId>true</appendAssemblyId>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-assembly</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

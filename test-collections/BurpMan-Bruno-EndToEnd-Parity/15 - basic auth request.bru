@@ -1,0 +1,26 @@
+meta {
+  name: 15 - basic auth request
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{base_url}}/basic-auth/demo-user/demo-pass
+  body: none
+  auth: basic
+}
+
+auth:basic {
+  username: demo-user
+  password: demo-pass
+}
+
+tests {
+  test("15 - basic auth works", function() {
+    var body = res.getBody();
+    expect(res.getStatus()).to.equal(200);
+    expect(body.authenticated).to.equal(true);
+    expect(body.user).to.equal("demo-user");
+  });
+}
+

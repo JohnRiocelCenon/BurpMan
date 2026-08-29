@@ -1,0 +1,20 @@
+meta {
+  name: 10 - set next request jump
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{base_url}}/get?stage=10
+  body: none
+  auth: none
+}
+
+tests {
+  test("10 - status 200", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  bru.setNextRequest("12 - jump target");
+}
+
