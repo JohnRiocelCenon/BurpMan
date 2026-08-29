@@ -34,6 +34,13 @@ public class CollectionTreePanel extends JPanel {
     private JButton wsButton;
     private JPanel advancedMultiBox;
 
+    /** The "+ Add Collection" toolbar button. Hidden until the user has loaded
+     *  their first collection so newcomers use the Browse... control at the
+     *  top instead of mistaking this button for it. Re-shown by
+     *  {@link #loadCollection(CollectionTreeNode)} and hidden again by
+     *  {@link #clearTree()}. */
+    private JButton addCollectionBtn;
+
     /** Detach the cURL button from the tree toolbar and return it so the host
      *  can mount it in its own footer. Idempotent. */
     public JButton takeCurlButton() {
@@ -189,6 +196,11 @@ public class CollectionTreePanel extends JPanel {
         JButton addCollectionBtn = UITheme.button("+ Add Collection", UITheme.BtnStyle.ACCENT);
         addCollectionBtn.setToolTipText("Append another Postman/Bruno collection (file or folder) into this workspace.");
         addCollectionBtn.addActionListener(e -> promptAddCollection());
+        // Hidden by default so first-time users use the Browse... field above
+        // to load their initial collection. Revealed by loadCollection() once
+        // something is on the tree, then hidden again by clearTree().
+        addCollectionBtn.setVisible(false);
+        this.addCollectionBtn = addCollectionBtn;
 
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 4));
         toolbar.setOpaque(true);
@@ -451,6 +463,13 @@ public class CollectionTreePanel extends JPanel {
 
         int requestCount = root.getAllRequests().size();
         statusLabel.setText(requestCount + " requests");
+
+        // Reveal the "+ Add Collection" toolbar button now that there is
+        // already something on the tree — users adding a second workspace
+        // are the ones who need it. Hidden in clearTree() and on init.
+        if (addCollectionBtn != null) {
+            addCollectionBtn.setVisible(true);
+        }
     }
 
     /**
@@ -464,6 +483,11 @@ public class CollectionTreePanel extends JPanel {
         this.rootNode = null;
         if (statusLabel != null) {
             statusLabel.setText("No collection loaded");
+        }
+        // Return to the empty state — hide "+ Add Collection" so users know
+        // to use the Browse... field above to load their first collection.
+        if (addCollectionBtn != null) {
+            addCollectionBtn.setVisible(false);
         }
     }
 
