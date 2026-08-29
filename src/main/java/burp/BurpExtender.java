@@ -59,7 +59,11 @@ public class BurpExtender implements BurpExtension {
             // Build the main panel + register the suite tab.
             try {
                 importer = new PostmanImporter(api);
-                api.userInterface().registerSuiteTab("BurpMan", importer.getMainPanel());
+                // The tab carries the version. Several BurpMan builds now
+                // exist side by side, and a tab labelled just "BurpMan" gives
+                // no way to tell which jar is actually loaded — which turns
+                // "did my change take effect?" into guesswork.
+                api.userInterface().registerSuiteTab("BurpMan v2", importer.getMainPanel());
                 api.logging().logToOutput("BurpMan tab registered successfully.");
             } catch (Throwable t) {
                 // Last-ditch fallback: show a tab with the error so the user
@@ -75,7 +79,7 @@ public class BurpExtender implements BurpExtension {
                     err.setEditable(false);
                     err.setMargin(new java.awt.Insets(20, 20, 20, 20));
                     errPanel.add(new javax.swing.JScrollPane(err), java.awt.BorderLayout.CENTER);
-                    api.userInterface().registerSuiteTab("BurpMan (error)", errPanel);
+                    api.userInterface().registerSuiteTab("BurpMan v2 (error)", errPanel);
                 } catch (Throwable t2) {
                     api.logging().logToError("[BurpMan] Could not register error fallback tab: " + t2);
                 }
