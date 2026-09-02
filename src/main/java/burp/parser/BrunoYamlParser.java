@@ -175,7 +175,7 @@ final class BrunoYamlParser {
         return buildRequestItem(node, name);
     }
 
-    /** Read a Bruno folder-descriptor and stamp its auth/scripts onto {@code folder}. */
+    /** Read a Bruno folder-descriptor and stamp its auth/headers/scripts onto {@code folder}. */
     static void applyFolderMeta(PostmanCollection.Item folder, File file) throws Exception {
         Map<String, Object> tree = readTree(file);
         Map<String, Object> info = asMap(tree.get("info"));
@@ -186,8 +186,23 @@ final class BrunoYamlParser {
         Map<String, Object> request = asMap(tree.get("request"));
         if (request != null) {
             folder.auth = parseAuth(request.get("auth"));
+            // Folder headers are inherited by every request beneath. Dropping
+            // them sends a request that is authenticated but not identified —
+            // the server answers 401 while the Authorization header looks fine,
+            // which points the reader at the token rather than at the missing
+            // headers.
+            List<PostmanCollection.Header> headers = parseHeaders(asList(request.get("headers")));
+            if (!headers.isEmpty()) {
+                folder.folderHeaders = headers;
+            }
         }
+        // OpenCollection puts folder scripts under `request.scripts`; older
+        // Bruno YAML uses a top-level `runtime.scripts`. Reading only one means
+        // a folder's pre-request hook never runs at all, with no error to say so.
         List<PostmanCollection.Event> events = parseRuntimeScripts(asMap(tree.get("runtime")));
+        if (events.isEmpty() && request != null) {
+            events = parseRuntimeScripts(request);
+        }
         if (!events.isEmpty()) {
             folder.event = events;
         }
@@ -206,8 +221,15 @@ final class BrunoYamlParser {
         if (request != null) {
             PostmanCollection.Auth auth = parseAuth(request.get("auth"));
             if (auth != null) collection.auth = auth;
+            List<PostmanCollection.Header> headers = parseHeaders(asList(request.get("headers")));
+            if (!headers.isEmpty()) {
+                collection.folderHeaders = headers;
+            }
         }
         List<PostmanCollection.Event> events = parseRuntimeScripts(asMap(tree.get("runtime")));
+        if (events.isEmpty() && request != null) {
+            events = parseRuntimeScripts(request);
+        }
         if (!events.isEmpty()) {
             collection.event = events;
         }

@@ -8,6 +8,9 @@ public class PostmanCollection {
    public List<PostmanCollection.Variable> variable;
    public PostmanCollection.Auth auth;
    public List<PostmanCollection.Event> event;
+   /** Collection-wide headers (Bruno's {@code opencollection.yml}). See
+    *  {@link Item#folderHeaders}. */
+   public transient List<PostmanCollection.Header> folderHeaders;
    public transient boolean analyzed = false;
 
    public static class Auth {
@@ -131,6 +134,14 @@ public class PostmanCollection {
       public List<PostmanCollection.Event> event;
       public PostmanCollection.Auth auth;
       public List<PostmanCollection.Example> response;
+      /**
+       * Headers declared on a <em>folder</em>, inherited by every request
+       * beneath it. Bruno folders carry these; Postman has no equivalent, so
+       * this is transient — Gson must never populate it from collection JSON.
+       * Kept off {@link #request} because a non-null {@code request} is what
+       * marks an item as a request rather than a folder.
+       */
+      public transient List<PostmanCollection.Header> folderHeaders;
       public transient boolean isCollectionWrapper = false;
       public transient boolean analyzed = false;
       public transient boolean pendingAnalyze = false;

@@ -296,7 +296,7 @@ public final class RhinoScriptEngine {
             } catch (Throwable ignore) { /* polyfill best-effort */ }
 
             try {
-                cx.evaluateString(scope, preprocessed, "<pm-script>", 1, null);
+                evaluateAllowingTopLevelReturn(cx, scope, preprocessed, ctx);
             } catch (org.mozilla.javascript.RhinoException re) {
                 // Surface the line/column so users can see exactly which
                 // unsupported syntax tripped the engine instead of silently
@@ -310,6 +310,40 @@ public final class RhinoScriptEngine {
             SCRIPT_LOG_THREADLOCAL.remove();
             Context.exit();
         }
+    }
+
+    /**
+     * Evaluates a script, tolerating a top-level {@code return}.
+     *
+     * <p>Postman and Bruno both run a script as a function body, so
+     * {@code if (haveToken) return;} is the ordinary way to say "nothing to do".
+     * Rhino evaluates at global level, where that is a hard
+     * {@code EvaluatorException: invalid return} — the script fails before its
+     * first statement, and a folder that meant to bootstrap its auth silently
+     * does nothing.
+     *
+     * <p>Compile first and only wrap on that specific failure, rather than
+     * wrapping everything up front: a wrapper turns top-level {@code var} into
+     * function-scoped locals, so scripts that don't need it must not get it.
+     */
+    private static void evaluateAllowingTopLevelReturn(Context cx, Scriptable scope,
+                                                       String script, ScriptContext ctx) {
+        try {
+            cx.compileString(script, "<pm-script>", 1, null);
+        } catch (org.mozilla.javascript.EvaluatorException ee) {
+            String msg = ee.getMessage();
+            if (msg != null && msg.contains("invalid return")) {
+                ctx.log("[script] top-level return — running as a function body,"
+                        + " the way Postman and Bruno do.");
+                // Call immediately so execution order and timing are unchanged.
+                cx.evaluateString(scope,
+                        "(function(){\n" + script + "\n}).call(this);",
+                        "<pm-script>", 0, null);
+                return;
+            }
+            throw ee;
+        }
+        cx.evaluateString(scope, script, "<pm-script>", 1, null);
     }
 
     /**
@@ -1040,6 +1074,28 @@ public final class RhinoScriptEngine {
      *  normally". Thread-local so concurrent runs don't cross-talk. */
     public static final ThreadLocal<String> NEXT_REQUEST_THREADLOCAL =
         new ThreadLocal<>();
+
+    /**
+     * Executes another request from the current collection, by path or name.
+     *
+     * <p>Implemented by the runner, which owns request lookup, variable scoping
+     * and sending; the script engine only needs somewhere to delegate. Returns
+     * the response for the script to inspect, or {@code null} when no request
+     * matches.
+     */
+    public interface RequestRunner {
+        Object run(String requestPath) throws Exception;
+    }
+
+    /** Installed by the runner for the duration of a run. */
+    public static final ThreadLocal<RequestRunner> REQUEST_RUNNER_THREADLOCAL =
+        new ThreadLocal<>();
+
+    /** Guards against a request chain that runs itself. */
+    static final ThreadLocal<java.util.Deque<String>> RUN_REQUEST_STACK =
+        ThreadLocal.withInitial(java.util.ArrayDeque::new);
+
+    static final int MAX_RUN_REQUEST_DEPTH = 16;
 
     // =====================================================================
     // Host objects exposed to JS scripts
@@ -2003,13 +2059,68 @@ public final class RhinoScriptEngine {
             String s = (name == null) ? "" : name;
             NEXT_REQUEST_THREADLOCAL.set(s);
         }
+
+        /**
+         * Bruno's {@code bru.runRequest(path)} — executes another request from
+         * the same collection, inline, and returns its response.
+         *
+         * <p>Collections use this to bootstrap auth: a folder's pre-request
+         * script runs the login chain so the folder's own requests inherit the
+         * resulting tokens. Returning {@code null} without running anything left
+         * those tokens unset, so every request in the folder went out with
+         * unresolved {@code {{...}}} placeholders and came back 401 — while the
+         * same collection passed in Bruno.
+         *
+         * <p>The runner installs {@link #REQUEST_RUNNER_THREADLOCAL}; without
+         * one (a bare script run, or a unit test) this still degrades to a
+         * warning rather than pretending the request happened.
+         */
         public Object runRequest(String name) {
-            if (!runRequestWarningLogged) {
-                runRequestWarningLogged = true;
-                String target = (name == null || name.trim().isEmpty()) ? "<empty>" : name;
-                ctx.log("⚠ bru.runRequest(\"" + target + "\") is not implemented in BurpMan.");
+            String target = (name == null) ? "" : name.trim();
+            if (target.isEmpty()) {
+                ctx.log("⚠ bru.runRequest() called with no request name.");
+                return null;
             }
-            return null;
+
+            RequestRunner runner = REQUEST_RUNNER_THREADLOCAL.get();
+            if (runner == null) {
+                if (!runRequestWarningLogged) {
+                    runRequestWarningLogged = true;
+                    ctx.log("⚠ bru.runRequest(\"" + target + "\") needs a collection run;"
+                            + " use ▶ Run to execute the chain.");
+                }
+                return null;
+            }
+
+            // A script that runs itself would recurse until the stack gives out,
+            // so refuse the cycle and say which chain caused it.
+            java.util.Deque<String> stack = RUN_REQUEST_STACK.get();
+            if (stack.contains(target)) {
+                ctx.log("⚠ bru.runRequest(\"" + target + "\") would loop ("
+                        + String.join(" → ", stack) + " → " + target + ") — skipped.");
+                return null;
+            }
+            if (stack.size() >= MAX_RUN_REQUEST_DEPTH) {
+                ctx.log("⚠ bru.runRequest(\"" + target + "\") exceeded "
+                        + MAX_RUN_REQUEST_DEPTH + " nested calls — skipped.");
+                return null;
+            }
+
+            stack.push(target);
+            try {
+                Object result = runner.run(target);
+                if (result == null) {
+                    // Distinguish "no such request" from "ran and returned
+                    // nothing"; the former is a typo the author should see.
+                    ctx.log("⚠ bru.runRequest(\"" + target + "\") — no matching request found.");
+                }
+                return result;
+            } catch (Exception e) {
+                ctx.log("⚠ bru.runRequest(\"" + target + "\") failed: " + e.getMessage());
+                return null;
+            } finally {
+                stack.pop();
+            }
         }
         public void sleep(int ms) {
             try { Thread.sleep(Math.max(0, ms)); } catch (InterruptedException ignore) {}
