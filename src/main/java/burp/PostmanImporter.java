@@ -3818,11 +3818,16 @@ public class PostmanImporter {
      * <p>Nearest wins: a request's own header beats its folder's, and an inner
      * folder beats an outer one. A disabled inherited header is skipped rather
      * than added switched-off, so it cannot later be re-enabled by accident.
+     *
+     * <p>Public so the Request Builder can fold the same headers in when a
+     * request is opened. Both send paths read from the headers table, so
+     * merging at load time is what makes a single manual Send behave like a
+     * batch run — and it also lets the tester see what will actually be sent.
      */
-    private void applyInheritedHeaders(PostmanCollection.Request request, String path) {
-        if (request == null) return;
+    public int applyInheritedHeaders(PostmanCollection.Request request, String path) {
+        if (request == null) return 0;
         java.util.List<PostmanCollection.Header> inherited = getHeadersForPath(path);
-        if (inherited.isEmpty()) return;
+        if (inherited.isEmpty()) return 0;
 
         if (request.header == null) request.header = new java.util.ArrayList<>();
         java.util.Set<String> present = new java.util.HashSet<>();
@@ -3847,9 +3852,7 @@ public class PostmanImporter {
             request.header.add(copy);
             added++;
         }
-        if (added > 0) {
-            ui.appendLog("🧬 Inherited " + added + " folder header(s) for " + path);
-        }
+        return added;
     }
 
     private void processRequest(RequestItem item, String destination) throws Exception {
@@ -3880,7 +3883,10 @@ public class PostmanImporter {
         // Fold in folder/collection headers first, so the pre-request script
         // sees the same request the server will.
         try {
-            applyInheritedHeaders(item.request, item.path);
+            int inherited = applyInheritedHeaders(item.request, item.path);
+            if (inherited > 0) {
+                ui.appendLog("🧬 Inherited " + inherited + " folder header(s) for " + item.path);
+            }
         } catch (Exception e) {
             ui.appendLog("⚠️ Folder header inheritance failed for " + item.name + ": " + e.getMessage());
         }
