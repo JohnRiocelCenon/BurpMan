@@ -1910,8 +1910,24 @@ public final class RhinoScriptEngine {
                     } catch (Throwable ignore) {}
                 }
             }
+            // Bruno's documented jar API names. A script that calls
+            // jar.deleteCookies(url) threw "Cannot find function deleteCookies",
+            // which aborts the whole pre-request hook — so the cookies it was
+            // trying to clear stayed, and every later failure in the chain
+            // pointed away from the real cause.
+            public void deleteCookies() { clear(); }
+            public void deleteCookies(String url) { clear(); }
+            public void deleteCookies(String url, Object cb) { clear(url, cb); }
+            public void deleteAllCookies() { clear(); }
+            public void deleteAllCookies(Object cb) { clear(null, cb); }
+            public void deleteCookie(String url, String name) { /* no per-cookie removal yet */ }
+            public void deleteCookie(String url, String name, Object cb) { clear(url, cb); }
             public void set(String url, String name, String value) { /* no-op */ }
+            public void setCookie(String url, String name, String value) { /* no-op */ }
+            public void setCookies(String url, Object cookies) { /* no-op */ }
             public Object get(String url, String name) { return null; }
+            public Object getCookie(String url, String name) { return null; }
+            public Object getCookies(String url) { return null; }
         }
 
         /** Bruno's request-control helpers. {@code bru.setNextRequest(name)}
@@ -2641,11 +2657,25 @@ public final class RhinoScriptEngine {
         public long getDuration() { return getResponseTime(); }
     }
 
-    /** Case-insensitive response-headers view for {@code res.headers.<Name>}
-     *  and {@code res.headers.get("Set-Cookie")}. */
-    public static final class ResponseHeadersHost {
+    /**
+     * Case-insensitive response-headers view.
+     *
+     * <p>Extends {@link ScriptableObject} rather than being exposed as a plain
+     * Java object, because Rhino resolves a property on a Java object to a
+     * public field or bean getter. {@code res.headers.location} matched neither,
+     * so it evaluated to {@code undefined} — and a script reading the OAuth
+     * {@code Location} redirect saw no header at all on a response that plainly
+     * had one. Header names are not known at compile time, so they have to be
+     * resolved dynamically.
+     *
+     * <p>{@code get}/{@code has}/{@code getNames} stay callable so scripts
+     * written against the older shape keep working.
+     */
+    public static final class ResponseHeadersHost extends ScriptableObject {
+        private static final long serialVersionUID = 1L;
         private final java.util.Map<String, String> byLower = new java.util.LinkedHashMap<>();
-        private final Scriptable scriptScope;
+        private final transient Scriptable scriptScope;
+
         ResponseHeadersHost(java.util.List<burp.models.PostmanCollection.Header> headers,
                             Scriptable scope) {
             this.scriptScope = scope;
@@ -2656,10 +2686,60 @@ public final class RhinoScriptEngine {
                     }
                 }
             }
+            if (scope != null) {
+                try {
+                    setParentScope(scope);
+                    setPrototype(ScriptableObject.getObjectPrototype(scope));
+                } catch (RuntimeException ignore) {
+                    // A missing prototype only costs Object.prototype helpers;
+                    // header lookup below still works.
+                }
+                defineHostFunction("get", String.class);
+                defineHostFunction("has", String.class);
+                defineHostFunction("getNames");
+            }
         }
+
         ResponseHeadersHost(java.util.List<burp.models.PostmanCollection.Header> headers) {
             this(headers, null);
         }
+
+        private void defineHostFunction(String name, Class<?>... args) {
+            try {
+                java.lang.reflect.Method m = ResponseHeadersHost.class.getMethod(name, args);
+                defineProperty(name,
+                        new org.mozilla.javascript.FunctionObject(name, m, this),
+                        ScriptableObject.DONTENUM);
+            } catch (RuntimeException | NoSuchMethodException ignore) {
+                // Property access still resolves headers; only the explicit
+                // .get()/.has() call style would be unavailable.
+            }
+        }
+
+        @Override public String getClassName() { return "ResponseHeaders"; }
+
+        /** Resolves {@code res.headers.location} and {@code res.headers["Location"]}. */
+        @Override
+        public Object get(String name, Scriptable start) {
+            Object defined = super.get(name, start);
+            if (defined != NOT_FOUND) return defined;
+            if (name == null) return NOT_FOUND;
+            String v = byLower.get(name.toLowerCase().trim());
+            if (v == null) return NOT_FOUND;
+            return toJsString(v, scriptScope != null ? scriptScope : start);
+        }
+
+        @Override
+        public boolean has(String name, Scriptable start) {
+            if (super.has(name, start)) return true;
+            return name != null && byLower.containsKey(name.toLowerCase().trim());
+        }
+
+        @Override
+        public Object[] getIds() {
+            return byLower.keySet().toArray(new Object[0]);
+        }
+
         /** Return value MUST be a real JS string (not a Java {@code String})
          *  so subsequent {@code .split("?")} / {@code .replace("?", ...)}
          *  calls hit Rhino's polyfilled methods rather than Java's regex

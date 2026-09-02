@@ -56,24 +56,7 @@ public class RequestBuilder {
       String resolvedUrl = this.getResolvedUrl(request.url);
       String method = request.method != null ? request.method : "GET";
       String path = this.buildPath(request.url, resolvedUrl);
-      if (path != null) {
-         for (int i = 0; i < path.length(); i++) {
-            char c = path.charAt(i);
-            if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == 8232 || c == 8233 || c == 133) {
-               StringBuilder sb = new StringBuilder(path.length());
-
-               for (int j = 0; j < path.length(); j++) {
-                  char d = path.charAt(j);
-                  if (d != ' ' && d != '\t' && d != '\r' && d != '\n' && d != 8232 && d != 8233 && d != 133) {
-                     sb.append(d);
-                  }
-               }
-
-               path = sb.toString();
-               break;
-            }
-         }
-      }
+      path = percentEncodeIllegalRequestTargetChars(path);
 
       headers.add(method + " " + path + " HTTP/1.1");
       String host = this.buildHost(request.url, resolvedUrl);
@@ -410,6 +393,61 @@ public class RequestBuilder {
       }
       m.appendTail(sb);
       return sb.toString();
+   }
+
+   /**
+    * Percent-encodes characters that must not appear literally in a request
+    * target.
+    *
+    * <p>A raw space would split the request line and break HTTP framing, and
+    * CR/LF would allow header injection, so they cannot be sent as-is. The
+    * previous behaviour was to delete them, which keeps the request well-formed
+    * but silently changes what was asked for: an OAuth {@code scope=openid ciam}
+    * went out as {@code scope=openidciam} and the server rejected it as an
+    * invalid scope — a failure that looks like a server or credentials problem
+    * rather than a client-side edit.
+    *
+    * <p>Encoding preserves the value instead. If it really is wrong the server
+    * can say so, and the request line stays unambiguous either way.
+    */
+   static String percentEncodeIllegalRequestTargetChars(String path) {
+      if (path == null || path.isEmpty()) {
+         return path;
+      }
+
+      boolean needsEncoding = false;
+      for (int i = 0; i < path.length(); i++) {
+         if (isIllegalInRequestTarget(path.charAt(i))) {
+            needsEncoding = true;
+            break;
+         }
+      }
+      if (!needsEncoding) {
+         return path;
+      }
+
+      StringBuilder out = new StringBuilder(path.length() + 16);
+      for (int i = 0; i < path.length(); i++) {
+         char c = path.charAt(i);
+         if (!isIllegalInRequestTarget(c)) {
+            out.append(c);
+            continue;
+         }
+         // Encode the UTF-8 bytes, so non-ASCII separators such as U+2028
+         // survive as a valid multi-byte escape rather than a lone '?'.
+         byte[] bytes = String.valueOf(c).getBytes(StandardCharsets.UTF_8);
+         for (byte b : bytes) {
+            out.append('%');
+            out.append(Character.toUpperCase(Character.forDigit((b >> 4) & 0xF, 16)));
+            out.append(Character.toUpperCase(Character.forDigit(b & 0xF, 16)));
+         }
+      }
+      return out.toString();
+   }
+
+   private static boolean isIllegalInRequestTarget(char c) {
+      return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+             || c == '\u2028' || c == '\u2029' || c == '\u0085';
    }
 
    private String extractPathFromUrl(String urlString) {
