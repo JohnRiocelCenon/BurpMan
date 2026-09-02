@@ -51,3 +51,5 @@ workspaces/
 **/.env
 **/.env.*
 
+
+dist/

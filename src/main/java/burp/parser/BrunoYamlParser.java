@@ -290,11 +290,7 @@ final class BrunoYamlParser {
         // Bruno YAML uses `enabled: false`. Reading only one of the two silently
         // activates variables the author turned off — and because a disabled
         // duplicate normally sits *after* the live one, the stale value wins.
-        boolean enabled = !isTrue(v.get("disabled"));
-        Object enabledFlag = v.get("enabled");
-        if (enabledFlag != null && "false".equalsIgnoreCase(String.valueOf(enabledFlag).trim())) {
-            enabled = false;
-        }
+        boolean enabled = !isDisabled(v);
 
         Object raw = v.get("value");
         String declaredType = str(v.get("type"));
@@ -360,6 +356,21 @@ final class BrunoYamlParser {
         return o != null && "true".equalsIgnoreCase(String.valueOf(o).trim());
     }
 
+    /**
+     * Whether an entry — a header, form field, or variable — is switched off.
+     *
+     * <p>OpenCollection writes {@code disabled: true}; older Bruno YAML writes
+     * {@code enabled: false}. Both must be honoured, because reading only one
+     * sends something the author explicitly turned off. That is how a disabled
+     * {@code ip: 127.0.0.1} header reached a live host.
+     */
+    private static boolean isDisabled(Map<String, Object> entry) {
+        if (entry == null) return false;
+        if (isTrue(entry.get("disabled"))) return true;
+        Object enabled = entry.get("enabled");
+        return enabled != null && "false".equalsIgnoreCase(String.valueOf(enabled).trim());
+    }
+
     /** A variable after unwrapping and flattening. */
     private static final class VarEntry {
         final String key;
@@ -406,8 +417,7 @@ final class BrunoYamlParser {
             PostmanCollection.Header header = new PostmanCollection.Header();
             header.key = key;
             header.value = str(h.get("value"));
-            Object enabled = h.get("enabled");
-            header.disabled = enabled != null && "false".equalsIgnoreCase(String.valueOf(enabled));
+            header.disabled = isDisabled(h);
             header.description = str(h.get("description"));
             out.add(header);
         }
@@ -463,8 +473,7 @@ final class BrunoYamlParser {
                     PostmanCollection.UrlEncoded form = new PostmanCollection.UrlEncoded();
                     form.key = key;
                     form.value = str(e.get("value"));
-                    Object enabled = e.get("enabled");
-                    form.disabled = enabled != null && "false".equalsIgnoreCase(String.valueOf(enabled));
+                    form.disabled = isDisabled(e);
                     form.description = str(e.get("description"));
                     form.type = firstNonBlank(str(e.get("type")), "text");
                     body.urlencoded.add(form);
@@ -486,8 +495,7 @@ final class BrunoYamlParser {
                     if (key == null || key.trim().isEmpty()) continue;
                     PostmanCollection.FormData form = new PostmanCollection.FormData();
                     form.key = key;
-                    Object enabled = e.get("enabled");
-                    form.disabled = enabled != null && "false".equalsIgnoreCase(String.valueOf(enabled));
+                    form.disabled = isDisabled(e);
                     form.type = firstNonBlank(str(e.get("type")), "text");
                     form.contentType = str(e.get("contentType"));
                     if ("file".equalsIgnoreCase(form.type)) {
