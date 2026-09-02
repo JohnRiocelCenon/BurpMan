@@ -1717,6 +1717,23 @@ public final class RhinoScriptEngine {
         private final ScriptContext ctx;
         private final Scriptable jsScope;
         private boolean runRequestWarningLogged = false;
+
+        /** Returns fixed text, so a parsed object still stringifies to its JSON. */
+        private static final class RawTextFunction extends org.mozilla.javascript.BaseFunction {
+            private static final long serialVersionUID = 1L;
+            private final String text;
+            RawTextFunction(Scriptable scope, String text) {
+                this.text = text;
+                if (scope != null) {
+                    setParentScope(scope);
+                    setPrototype(ScriptableObject.getFunctionPrototype(scope));
+                }
+            }
+            @Override
+            public Object call(Context cx, Scriptable scope, Scriptable thisObj, Object[] args) {
+                return text;
+            }
+        }
         BruHost(ScriptContext ctx, Scriptable jsScope) { this.ctx = ctx; this.jsScope = jsScope; }
         /** Legacy no-scope constructor kept for backwards compatibility with any
          *  callers that construct BruHost directly (e.g. test harnesses).
@@ -1775,7 +1792,51 @@ public final class RhinoScriptEngine {
         }
         public Object getVar(String k) {
             String v = ctx.getCollectionVariables().get(k);
-            return v != null ? v : ctx.getVariable(k);
+            return asScriptValue(v != null ? v : ctx.getVariable(k));
+        }
+
+        /**
+         * Presents a stored variable the way a script expects to receive it.
+         *
+         * <p>Variables are held as text, but an OpenCollection {@code type:
+         * object} variable is an object as far as its author is concerned:
+         * {@code bru.getEnvVar("test-user").gb.cert} is the documented way to
+         * read one. Returning the raw JSON made that a
+         * {@code TypeError: cannot read property "gb" from undefined}, pointing
+         * at the script rather than at the value it was handed.
+         *
+         * <p>The parsed object keeps {@code toString}/{@code valueOf} returning
+         * the original text, so a script that instead does
+         * {@code JSON.parse(bru.getEnvVar(...))} or concatenates the value still
+         * behaves as before. Anything that is not a JSON object or array is
+         * returned untouched.
+         */
+        private Object asScriptValue(Object stored) {
+            if (!(stored instanceof String)) return stored;
+            String raw = (String) stored;
+            String t = raw.trim();
+            if (t.length() < 2) return raw;
+            char c = t.charAt(0);
+            if (c != '{' && c != '[') return raw;
+
+            Context cx = Context.getCurrentContext();
+            if (cx == null) return raw;
+            Scriptable scope = jsScope != null ? jsScope : ScriptRuntime.getTopCallScope(cx);
+            if (scope == null) return raw;
+
+            try {
+                Object parsed = new org.mozilla.javascript.json.JsonParser(cx, scope).parseValue(t);
+                if (!(parsed instanceof Scriptable)) return raw;
+                Scriptable obj = (Scriptable) parsed;
+                // Keep the text form reachable so existing string uses still work.
+                ScriptableObject.putProperty(obj, "toString",
+                        new RawTextFunction(scope, raw));
+                ScriptableObject.putProperty(obj, "valueOf",
+                        new RawTextFunction(scope, raw));
+                return obj;
+            } catch (Exception notJson) {
+                return raw;
+            }
         }
         public void setEnvVar(String k, Object v) {
             if (k == null) return;
@@ -1851,7 +1912,7 @@ public final class RhinoScriptEngine {
         }
         public Object getEnvVar(String k) {
             String v = ctx.getEnvironmentVariables().get(k);
-            return v != null ? v : ctx.getVariable(k);
+            return asScriptValue(v != null ? v : ctx.getVariable(k));
         }
         public boolean hasEnvVar(String k) { return ctx.getEnvironmentVariables().containsKey(k); }
         public boolean hasVar(String k) { return ctx.getCollectionVariables().containsKey(k) || ctx.getVariable(k) != null; }
@@ -1859,7 +1920,7 @@ public final class RhinoScriptEngine {
         public Object getCollectionVar(String k) {
             if (k == null) return null;
             String v = ctx.getCollectionVariables().get(k);
-            return v != null ? v : ctx.getVariable(k);
+            return asScriptValue(v != null ? v : ctx.getVariable(k));
         }
         public void setCollectionVar(String k, Object v) {
             if (k == null) return;
