@@ -1286,6 +1286,15 @@ public class ImporterPanel {
                 return;
             }
 
+            // Fold in folder/collection headers before the request reaches the
+            // builder. Both Send and Send-to-Repeater read from the headers
+            // table, so merging here is what makes a single manual send behave
+            // like a batch run — and it shows the tester what will actually go
+            // out, rather than leaving inherited headers invisible.
+            try {
+                importer.applyInheritedHeaders(clone, request.getPath());
+            } catch (Exception ignore) { }
+
             // If we have cached edits for this request, restore them; otherwise load the resolved clone.
             // Suppress live edit-cache save during the clear→reload cycle so the
             // intermediate "blank" state doesn't get persisted to the new key.
