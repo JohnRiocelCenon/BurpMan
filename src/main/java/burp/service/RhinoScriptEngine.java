@@ -344,18 +344,53 @@ public final class RhinoScriptEngine {
      * <p>Compiling the original source first means correct scripts keep exact
      * V8 semantics, and only genuinely-duplicated declarations pay the
      * downgrade.
+     *
+     * <p>The same compile-first-then-adapt rule handles a top-level
+     * {@code return}: Postman and Bruno run a script as a function body, so a
+     * bare {@code return} is legal there but an {@code EvaluatorException} at
+     * Rhino's global scope. It is wrapped in an immediately-called function
+     * only when that specific error fires, because the wrapper turns top-level
+     * {@code var} into function-scoped locals and must not touch scripts that
+     * don't need it.
      */
     private org.mozilla.javascript.Script compileTolerantly(
             Context cx, Scriptable scope, String source) {
+        return compileTolerantly(cx, scope, source, false, false);
+    }
+
+    private org.mozilla.javascript.Script compileTolerantly(
+            Context cx, Scriptable scope, String source, boolean wrapped, boolean downgraded) {
         try {
             return cx.compileString(source, "<pm-script>", 1, null);
         } catch (org.mozilla.javascript.EvaluatorException ee) {
-            if (!isRedeclarationError(ee)) throw ee;
-            ctx.log("[Script] duplicate declaration detected ("
-                + ee.details() + ") — retrying with hoisted var scoping");
-            return cx.compileString(
-                downgradeLetConstToVar(source), "<pm-script>", 1, null);
+            // A folder that means to bootstrap its auth with `if (haveToken)
+            // return;` dies before its first statement otherwise. Wrap and
+            // call immediately so execution order and timing are unchanged; the
+            // guard flags keep each transform to a single application, so a
+            // script that needs both a wrap and a var downgrade still converges
+            // instead of looping.
+            if (!wrapped && isTopLevelReturnError(ee)) {
+                ctx.log("[Script] top-level return — running as a function body, "
+                    + "the way Postman and Bruno do.");
+                return compileTolerantly(cx, scope,
+                    "(function(){\n" + source + "\n}).call(this);", true, downgraded);
+            }
+            if (!downgraded && isRedeclarationError(ee)) {
+                ctx.log("[Script] duplicate declaration detected ("
+                    + ee.details() + ") — retrying with hoisted var scoping");
+                return compileTolerantly(cx, scope,
+                    downgradeLetConstToVar(source), wrapped, true);
+            }
+            throw ee;
         }
+    }
+
+    /** True when Rhino rejected a top-level {@code return}. Postman and Bruno
+     *  run a script as a function body, where the same return is legal; Rhino
+     *  evaluates at global scope, where it is an {@code EvaluatorException}. */
+    private static boolean isTopLevelReturnError(org.mozilla.javascript.EvaluatorException ee) {
+        String msg = ee.getMessage();
+        return msg != null && msg.contains("invalid return");
     }
 
     /**
@@ -1299,6 +1334,28 @@ public final class RhinoScriptEngine {
     public static final ThreadLocal<String> NEXT_REQUEST_THREADLOCAL =
         new ThreadLocal<>();
 
+    /**
+     * Executes another request from the current collection, by path or name.
+     *
+     * <p>Implemented by the runner, which owns request lookup, variable scoping
+     * and sending; the script engine only needs somewhere to delegate. Returns
+     * the response for the script to inspect, or {@code null} when no request
+     * matches.
+     */
+    public interface RequestRunner {
+        Object run(String requestPath) throws Exception;
+    }
+
+    /** Installed by the runner for the duration of a run. */
+    public static final ThreadLocal<RequestRunner> REQUEST_RUNNER_THREADLOCAL =
+        new ThreadLocal<>();
+
+    /** Guards against a request chain that runs itself. */
+    static final ThreadLocal<java.util.Deque<String>> RUN_REQUEST_STACK =
+        ThreadLocal.withInitial(java.util.ArrayDeque::new);
+
+    static final int MAX_RUN_REQUEST_DEPTH = 16;
+
     // =====================================================================
     // Host objects exposed to JS scripts
     // =====================================================================
@@ -2041,7 +2098,7 @@ public final class RhinoScriptEngine {
         }
         public Object getVar(String k) {
             String v = ctx.getCollectionVariables().get(k);
-            return v != null ? v : ctx.getVariable(k);
+            return asScriptValue(v != null ? v : ctx.getVariable(k));
         }
         public void setEnvVar(String k, Object v) {
             if (k == null) return;
@@ -2123,7 +2180,7 @@ public final class RhinoScriptEngine {
         }
         public Object getEnvVar(String k) {
             String v = ctx.getEnvironmentVariables().get(k);
-            return v != null ? v : ctx.getVariable(k);
+            return asScriptValue(v != null ? v : ctx.getVariable(k));
         }
         public boolean hasEnvVar(String k) { return ctx.getEnvironmentVariables().containsKey(k); }
         public boolean hasVar(String k) { return ctx.getCollectionVariables().containsKey(k) || ctx.getVariable(k) != null; }
@@ -2131,7 +2188,68 @@ public final class RhinoScriptEngine {
         public Object getCollectionVar(String k) {
             if (k == null) return null;
             String v = ctx.getCollectionVariables().get(k);
-            return v != null ? v : ctx.getVariable(k);
+            return asScriptValue(v != null ? v : ctx.getVariable(k));
+        }
+
+        /**
+         * Presents a stored variable the way a script expects to receive it.
+         *
+         * <p>Variables are held as text, but an OpenCollection {@code type:
+         * object} variable is an object as far as its author is concerned:
+         * {@code bru.getEnvVar("test-user").gb.cert} is the documented way to
+         * read one. Returning the raw JSON made that a
+         * {@code TypeError: cannot read property "gb" from undefined}, pointing
+         * at the script rather than at the value it was handed.
+         *
+         * <p>The parsed object keeps {@code toString}/{@code valueOf} returning
+         * the original text, so a script that instead does
+         * {@code JSON.parse(bru.getEnvVar(...))} or concatenates the value still
+         * behaves as before. That matters because the same accessor serves
+         * Postman environments, where a JSON-looking value is often meant to
+         * stay text. Anything that is not a JSON object or array is returned
+         * untouched.
+         */
+        private Object asScriptValue(Object stored) {
+            if (!(stored instanceof String)) return stored;
+            String raw = (String) stored;
+            String t = raw.trim();
+            if (t.length() < 2) return raw;
+            char c = t.charAt(0);
+            if (c != '{' && c != '[') return raw;
+
+            Context cx = Context.getCurrentContext();
+            if (cx == null) return raw;
+            Scriptable scope = jsScope != null ? jsScope : ScriptRuntime.getTopCallScope(cx);
+            if (scope == null) return raw;
+
+            try {
+                Object parsed = new org.mozilla.javascript.json.JsonParser(cx, scope).parseValue(t);
+                if (!(parsed instanceof Scriptable)) return raw;
+                Scriptable obj = (Scriptable) parsed;
+                // Keep the text form reachable so existing string uses still work.
+                ScriptableObject.putProperty(obj, "toString", new RawTextFunction(scope, raw));
+                ScriptableObject.putProperty(obj, "valueOf", new RawTextFunction(scope, raw));
+                return obj;
+            } catch (Exception notJson) {
+                return raw;
+            }
+        }
+
+        /** Returns fixed text, so a parsed object still stringifies to its JSON. */
+        private static final class RawTextFunction extends org.mozilla.javascript.BaseFunction {
+            private static final long serialVersionUID = 1L;
+            private final String text;
+            RawTextFunction(Scriptable scope, String text) {
+                this.text = text;
+                if (scope != null) {
+                    setParentScope(scope);
+                    setPrototype(ScriptableObject.getFunctionPrototype(scope));
+                }
+            }
+            @Override
+            public Object call(Context cx, Scriptable scope, Scriptable thisObj, Object[] args) {
+                return text;
+            }
         }
         public void setCollectionVar(String k, Object v) {
             if (k == null) return;
@@ -2184,8 +2302,25 @@ public final class RhinoScriptEngine {
                     }
                 }
             }
+            // Bruno's documented jar API names. A script calling
+            // jar.deleteCookies(url) threw "Cannot find function deleteCookies",
+            // and Rhino reports a missing method as a hard TypeError, which
+            // aborts the whole pre-request hook - so the cookies it was trying
+            // to clear stayed, and every later failure in the chain pointed
+            // away from the real cause.
+            public void deleteCookies() { clear(); }
+            public void deleteCookies(String url) { clear(); }
+            public void deleteCookies(String url, Object cb) { clear(url, cb); }
+            public void deleteAllCookies() { clear(); }
+            public void deleteAllCookies(Object cb) { clear(null, cb); }
+            public void deleteCookie(String url, String name) { /* no per-cookie removal yet */ }
+            public void deleteCookie(String url, String name, Object cb) { clear(url, cb); }
             public void set(String url, String name, String value) { /* no-op */ }
+            public void setCookie(String url, String name, String value) { /* no-op */ }
+            public void setCookies(String url, Object cookies) { /* no-op */ }
             public Object get(String url, String name) { return null; }
+            public Object getCookie(String url, String name) { return null; }
+            public Object getCookies(String url) { return null; }
         }
 
         /** Bruno's request-control helpers. {@code bru.setNextRequest(name)}
@@ -2201,12 +2336,51 @@ public final class RhinoScriptEngine {
             NEXT_REQUEST_THREADLOCAL.set(s);
         }
         public Object runRequest(String name) {
-            if (!runRequestWarningLogged) {
-                runRequestWarningLogged = true;
-                String target = (name == null || name.trim().isEmpty()) ? "<empty>" : name;
-                ctx.log("⚠ bru.runRequest(\"" + target + "\") is not implemented in BurpMan.");
+            String target = (name == null) ? "" : name.trim();
+            if (target.isEmpty()) {
+                ctx.log("⚠ bru.runRequest() called with no request name.");
+                return null;
             }
-            return null;
+
+            RequestRunner runner = REQUEST_RUNNER_THREADLOCAL.get();
+            if (runner == null) {
+                if (!runRequestWarningLogged) {
+                    runRequestWarningLogged = true;
+                    ctx.log("⚠ bru.runRequest(\"" + target + "\") needs a collection run;"
+                            + " use ▶ Run to execute the chain.");
+                }
+                return null;
+            }
+
+            // A script that runs itself would recurse until the stack gives out,
+            // so refuse the cycle and say which chain caused it.
+            java.util.Deque<String> stack = RUN_REQUEST_STACK.get();
+            if (stack.contains(target)) {
+                ctx.log("⚠ bru.runRequest(\"" + target + "\") would loop ("
+                        + String.join(" → ", stack) + " → " + target + ") — skipped.");
+                return null;
+            }
+            if (stack.size() >= MAX_RUN_REQUEST_DEPTH) {
+                ctx.log("⚠ bru.runRequest(\"" + target + "\") exceeded "
+                        + MAX_RUN_REQUEST_DEPTH + " nested calls — skipped.");
+                return null;
+            }
+
+            stack.push(target);
+            try {
+                Object result = runner.run(target);
+                if (result == null) {
+                    // Distinguish "no such request" from "ran and returned
+                    // nothing"; the former is a typo the author should see.
+                    ctx.log("⚠ bru.runRequest(\"" + target + "\") — no matching request found.");
+                }
+                return result;
+            } catch (Exception e) {
+                ctx.log("⚠ bru.runRequest(\"" + target + "\") failed: " + e.getMessage());
+                return null;
+            } finally {
+                stack.pop();
+            }
         }
         public void sleep(int ms) {
             try { Thread.sleep(Math.max(0, ms)); } catch (InterruptedException ignore) {}
@@ -2931,9 +3105,10 @@ public final class RhinoScriptEngine {
 
     /** Case-insensitive response-headers view for {@code res.headers.<Name>}
      *  and {@code res.headers.get("Set-Cookie")}. */
-    public static final class ResponseHeadersHost {
+    public static final class ResponseHeadersHost extends ScriptableObject {
+        private static final long serialVersionUID = 1L;
         private final java.util.Map<String, String> byLower = new java.util.LinkedHashMap<>();
-        private final Scriptable scriptScope;
+        private final transient Scriptable scriptScope;
         ResponseHeadersHost(java.util.List<burp.models.PostmanCollection.Header> headers,
                             Scriptable scope) {
             this.scriptScope = scope;
@@ -2944,9 +3119,66 @@ public final class RhinoScriptEngine {
                     }
                 }
             }
+            if (scope != null) {
+                try {
+                    setParentScope(scope);
+                    setPrototype(ScriptableObject.getObjectPrototype(scope));
+                } catch (RuntimeException ignore) {
+                    // A missing prototype only costs Object.prototype helpers;
+                    // header lookup below still works.
+                }
+                defineHostFunction("get", String.class);
+                defineHostFunction("has", String.class);
+                defineHostFunction("getNames");
+            }
         }
         ResponseHeadersHost(java.util.List<burp.models.PostmanCollection.Header> headers) {
             this(headers, null);
+        }
+
+        private void defineHostFunction(String name, Class<?>... args) {
+            try {
+                java.lang.reflect.Method m = ResponseHeadersHost.class.getMethod(name, args);
+                defineProperty(name,
+                        new org.mozilla.javascript.FunctionObject(name, m, this),
+                        ScriptableObject.DONTENUM);
+            } catch (RuntimeException | NoSuchMethodException ignore) {
+                // Property access still resolves headers; only the explicit
+                // .get()/.has() call style would be unavailable.
+            }
+        }
+
+        @Override public String getClassName() { return "ResponseHeaders"; }
+
+        /**
+         * Resolves {@code res.headers.location} and {@code res.headers["Location"]}.
+         *
+         * <p>Rhino resolves a property on a plain Java object to a public field
+         * or bean getter. Header names are not known at compile time, so
+         * {@code res.headers.location} matched neither and evaluated to
+         * {@code undefined} - on a 302 that plainly carried the header. The
+         * script reading the OAuth redirect then reported "Location header not
+         * found" and the auth chain stalled with no indication of why.
+         */
+        @Override
+        public Object get(String name, Scriptable start) {
+            Object defined = super.get(name, start);
+            if (defined != NOT_FOUND) return defined;
+            if (name == null) return NOT_FOUND;
+            String v = byLower.get(name.toLowerCase().trim());
+            if (v == null) return NOT_FOUND;
+            return toJsString(v, scriptScope != null ? scriptScope : start);
+        }
+
+        @Override
+        public boolean has(String name, Scriptable start) {
+            if (super.has(name, start)) return true;
+            return name != null && byLower.containsKey(name.toLowerCase().trim());
+        }
+
+        @Override
+        public Object[] getIds() {
+            return byLower.keySet().toArray(new Object[0]);
         }
         /** Return value MUST be a real JS string (not a Java {@code String})
          *  so subsequent {@code .split("?")} / {@code .replace("?", ...)}

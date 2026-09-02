@@ -2,6 +2,10 @@ package burp.parser;
 
 import burp.models.PostmanCollection;
 import burp.models.PostmanEnvironment;
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -33,8 +37,18 @@ import java.util.Map;
  * {@code test} (they run at the same point in Postman's model).
  * Multiple scripts of the same {@code type} are concatenated with a
  * separator comment so both run at send time.
+ *
+ * <p>Variables are unwrapped from OpenCollection's
+ * {@code {type: object, data: "<json>"}} envelope, and object values are
+ * flattened to dotted paths so a reference like {@code {{gb.exp.apim.url}}}
+ * resolves. Entries marked {@code disabled: true} are treated as switched off.
  */
 final class BrunoYamlParser {
+
+    /** Guards against a self-referential or pathologically nested value. */
+    private static final int MAX_VAR_DEPTH = 12;
+
+    private static final Gson COMPACT_JSON = new Gson();
 
     private BrunoYamlParser() {}
 
@@ -98,15 +112,7 @@ final class BrunoYamlParser {
         List<Object> vars = asList(tree.get("vars"));
         if (vars != null) {
             for (Object entry : vars) {
-                Map<String, Object> v = asMap(entry);
-                if (v == null) continue;
-                String name = str(v.get("name"));
-                if (name == null || name.trim().isEmpty()) continue;
-                PostmanCollection.Variable variable = new PostmanCollection.Variable();
-                variable.key = name;
-                variable.value = str(v.get("value"));
-                variable.type = "text";
-                collection.variable.add(variable);
+                collection.variable.addAll(toCollectionVariables(asMap(entry)));
             }
         }
 
@@ -169,7 +175,7 @@ final class BrunoYamlParser {
         return buildRequestItem(node, name);
     }
 
-    /** Read a Bruno folder-descriptor and stamp its auth/scripts onto {@code folder}. */
+    /** Read a Bruno folder-descriptor and stamp its auth/headers/scripts onto {@code folder}. */
     static void applyFolderMeta(PostmanCollection.Item folder, File file) throws Exception {
         Map<String, Object> tree = readTree(file);
         Map<String, Object> info = asMap(tree.get("info"));
@@ -180,8 +186,23 @@ final class BrunoYamlParser {
         Map<String, Object> request = asMap(tree.get("request"));
         if (request != null) {
             folder.auth = parseAuth(request.get("auth"));
+            // Folder headers are inherited by every request beneath. Dropping
+            // them sends a request that is authenticated but not identified -
+            // the server answers 401 while the Authorization header looks fine,
+            // which points the reader at the token rather than at the missing
+            // headers.
+            List<PostmanCollection.Header> headers = parseHeaders(asList(request.get("headers")));
+            if (!headers.isEmpty()) {
+                folder.folderHeaders = headers;
+            }
         }
+        // OpenCollection puts folder scripts under `request.scripts`; older
+        // Bruno YAML uses a top-level `runtime.scripts`. Reading only one means
+        // a folder's pre-request hook never runs at all, with no error to say so.
         List<PostmanCollection.Event> events = parseRuntimeScripts(asMap(tree.get("runtime")));
+        if (events.isEmpty() && request != null) {
+            events = parseRuntimeScripts(request);
+        }
         if (!events.isEmpty()) {
             folder.event = events;
         }
@@ -200,8 +221,15 @@ final class BrunoYamlParser {
         if (request != null) {
             PostmanCollection.Auth auth = parseAuth(request.get("auth"));
             if (auth != null) collection.auth = auth;
+            List<PostmanCollection.Header> headers = parseHeaders(asList(request.get("headers")));
+            if (!headers.isEmpty()) {
+                collection.folderHeaders = headers;
+            }
         }
         List<PostmanCollection.Event> events = parseRuntimeScripts(asMap(tree.get("runtime")));
+        if (events.isEmpty() && request != null) {
+            events = parseRuntimeScripts(request);
+        }
         if (!events.isEmpty()) {
             collection.event = events;
         }
@@ -210,18 +238,30 @@ final class BrunoYamlParser {
         List<Object> vars = asList(tree.get("vars"));
         if (vars != null) {
             for (Object entry : vars) {
-                Map<String, Object> v = asMap(entry);
-                if (v == null) continue;
-                String name = str(v.get("name"));
-                if (name == null || name.trim().isEmpty()) continue;
-                PostmanCollection.Variable variable = new PostmanCollection.Variable();
-                variable.key = name;
-                variable.value = str(v.get("value"));
-                variable.type = "text";
+                List<PostmanCollection.Variable> expanded = toCollectionVariables(asMap(entry));
+                if (expanded.isEmpty()) continue;
                 if (collection.variable == null) collection.variable = new ArrayList<>();
-                collection.variable.add(variable);
+                collection.variable.addAll(expanded);
             }
         }
+    }
+
+    /**
+     * Collection-level {@code vars}, expanded the same way as environment
+     * variables. {@link PostmanCollection.Variable} has no enabled flag, so a
+     * disabled entry is dropped rather than added as if it were live.
+     */
+    private static List<PostmanCollection.Variable> toCollectionVariables(Map<String, Object> raw) {
+        List<PostmanCollection.Variable> out = new ArrayList<>();
+        for (VarEntry e : expandVariable(raw)) {
+            if (!e.enabled) continue;
+            PostmanCollection.Variable variable = new PostmanCollection.Variable();
+            variable.key = e.key;
+            variable.value = e.value;
+            variable.type = e.type;
+            out.add(variable);
+        }
+        return out;
     }
 
     static PostmanEnvironment parseEnvironment(File file) throws Exception {
@@ -233,20 +273,138 @@ final class BrunoYamlParser {
         if (vars == null) vars = asList(tree.get("vars"));
         if (vars != null) {
             for (Object entry : vars) {
-                Map<String, Object> v = asMap(entry);
-                if (v == null) continue;
-                String name = str(v.get("name"));
-                if (name == null || name.trim().isEmpty()) continue;
-                PostmanEnvironment.Value value = new PostmanEnvironment.Value();
-                value.key = name;
-                value.value = str(v.get("value"));
-                Object enabled = v.get("enabled");
-                value.enabled = enabled == null || !"false".equalsIgnoreCase(String.valueOf(enabled));
-                value.type = firstNonBlank(str(v.get("type")), "text");
-                env.values.add(value);
+                for (VarEntry e : expandVariable(asMap(entry))) {
+                    PostmanEnvironment.Value value = new PostmanEnvironment.Value();
+                    value.key = e.key;
+                    value.value = e.value;
+                    value.enabled = e.enabled;
+                    value.type = e.type;
+                    env.values.add(value);
+                }
             }
         }
         return env;
+    }
+
+    /**
+     * Expands one declared variable into the entries a collection can actually
+     * reference.
+     *
+     * <p>OpenCollection does not store a bare scalar. A value arrives wrapped as
+     * {@code {type: object, data: "<json>"}}, and collections address the pieces
+     * by dotted path - {@code {{gb.exp.apim.url}}}, never {@code {{gb}}}. Keeping
+     * only the declared name therefore leaves every reference unresolved while
+     * the environment still reports a healthy variable count, which reads as
+     * "the environment loaded but the values are wrong". So an object value is
+     * also flattened to one entry per leaf.
+     *
+     * <p>The declared name is kept as well, holding the JSON, so {@code {{gb}}}
+     * and scripts that want the whole document still work.
+     */
+    private static List<VarEntry> expandVariable(Map<String, Object> v) {
+        List<VarEntry> out = new ArrayList<>();
+        if (v == null) return out;
+        String name = str(v.get("name"));
+        if (name == null || name.trim().isEmpty()) return out;
+        name = name.trim();
+
+        boolean enabled = !isDisabled(v);
+
+        Object raw = v.get("value");
+        String declaredType = str(v.get("type"));
+        if (raw instanceof Map) {
+            Map<String, Object> holder = asMap(raw);
+            declaredType = firstNonBlank(str(holder.get("type")), declaredType);
+            raw = holder.get("data");
+        }
+
+        String type = isTrue(v.get("secret")) ? "secret" : firstNonBlank(declaredType, "text");
+        String text = raw == null ? null : str(raw);
+
+        out.add(new VarEntry(name, text, enabled, type));
+        flattenInto(out, name, tryParseJson(text), enabled, type, 0);
+        return out;
+    }
+
+    /** Adds one entry per child of {@code el}, keyed by dotted path. */
+    private static void flattenInto(List<VarEntry> out, String prefix, JsonElement el,
+                                    boolean enabled, String type, int depth) {
+        if (el == null || depth > MAX_VAR_DEPTH) return;
+        if (el.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> e : el.getAsJsonObject().entrySet()) {
+                addNode(out, prefix + "." + e.getKey(), e.getValue(), enabled, type, depth);
+            }
+        } else if (el.isJsonArray()) {
+            JsonArray arr = el.getAsJsonArray();
+            for (int i = 0; i < arr.size(); i++) {
+                addNode(out, prefix + "." + i, arr.get(i), enabled, type, depth);
+            }
+        }
+    }
+
+    private static void addNode(List<VarEntry> out, String key, JsonElement el,
+                                boolean enabled, String type, int depth) {
+        if (el == null || el.isJsonNull()) return;
+        if (el.isJsonObject() || el.isJsonArray()) {
+            // Containers keep their JSON so {{gb.exp}} behaves like {{gb}}.
+            out.add(new VarEntry(key, COMPACT_JSON.toJson(el), enabled, type));
+            flattenInto(out, key, el, enabled, type, depth + 1);
+        } else {
+            // getAsString on a primitive yields the unquoted scalar, so a number
+            // or boolean substitutes as written rather than as `"1"`.
+            out.add(new VarEntry(key, el.getAsJsonPrimitive().getAsString(), enabled, type));
+        }
+    }
+
+    private static JsonElement tryParseJson(String text) {
+        if (text == null) return null;
+        String t = text.trim();
+        if (t.length() < 2) return null;
+        char c = t.charAt(0);
+        if (c != '{' && c != '[') return null;
+        try {
+            JsonElement el = JsonParser.parseString(t);
+            return el != null && (el.isJsonObject() || el.isJsonArray()) ? el : null;
+        } catch (RuntimeException notJson) {
+            return null;
+        }
+    }
+
+    private static boolean isTrue(Object o) {
+        return o != null && "true".equalsIgnoreCase(String.valueOf(o).trim());
+    }
+
+    /**
+     * Whether an entry - a header, form field, or variable - is switched off.
+     *
+     * <p>OpenCollection writes {@code disabled: true}; older Bruno YAML writes
+     * {@code enabled: false}. Both must be honoured, because reading only one
+     * sends something the author explicitly turned off. That is how a disabled
+     * {@code ip: 127.0.0.1} header reached a live host. It also picks the wrong
+     * value rather than none: these files carry a live entry and a stale
+     * duplicate, and since the duplicate normally sits second, the dead value
+     * wins.
+     */
+    private static boolean isDisabled(Map<String, Object> entry) {
+        if (entry == null) return false;
+        if (isTrue(entry.get("disabled"))) return true;
+        Object enabled = entry.get("enabled");
+        return enabled != null && "false".equalsIgnoreCase(String.valueOf(enabled).trim());
+    }
+
+    /** A variable after unwrapping and flattening. */
+    private static final class VarEntry {
+        final String key;
+        final String value;
+        final boolean enabled;
+        final String type;
+
+        VarEntry(String key, String value, boolean enabled, String type) {
+            this.key = key;
+            this.value = value;
+            this.enabled = enabled;
+            this.type = type;
+        }
     }
 
     static int readSeq(File file) {
@@ -280,8 +438,7 @@ final class BrunoYamlParser {
             PostmanCollection.Header header = new PostmanCollection.Header();
             header.key = key;
             header.value = str(h.get("value"));
-            Object enabled = h.get("enabled");
-            header.disabled = enabled != null && "false".equalsIgnoreCase(String.valueOf(enabled));
+            header.disabled = isDisabled(h);
             header.description = str(h.get("description"));
             out.add(header);
         }
@@ -337,8 +494,7 @@ final class BrunoYamlParser {
                     PostmanCollection.UrlEncoded form = new PostmanCollection.UrlEncoded();
                     form.key = key;
                     form.value = str(e.get("value"));
-                    Object enabled = e.get("enabled");
-                    form.disabled = enabled != null && "false".equalsIgnoreCase(String.valueOf(enabled));
+                    form.disabled = isDisabled(e);
                     form.description = str(e.get("description"));
                     form.type = firstNonBlank(str(e.get("type")), "text");
                     body.urlencoded.add(form);
@@ -360,8 +516,7 @@ final class BrunoYamlParser {
                     if (key == null || key.trim().isEmpty()) continue;
                     PostmanCollection.FormData form = new PostmanCollection.FormData();
                     form.key = key;
-                    Object enabled = e.get("enabled");
-                    form.disabled = enabled != null && "false".equalsIgnoreCase(String.valueOf(enabled));
+                    form.disabled = isDisabled(e);
                     form.type = firstNonBlank(str(e.get("type")), "text");
                     form.contentType = str(e.get("contentType"));
                     if ("file".equalsIgnoreCase(form.type)) {
