@@ -3704,6 +3704,68 @@ public class PostmanImporter {
         }
     }
 
+    /**
+     * Backs {@code bru.runRequest(path)} — finds a request by path or name in
+     * the loaded collection and runs it inline, pre-script and post-script
+     * included, returning its response.
+     *
+     * <p>Matching is forgiving because scripts address requests the way a human
+     * would: a full path ({@code "Auth/CIAM/initialize"}), a path relative to
+     * the collection wrapper, or a bare name. Case-insensitive, since a script
+     * written against a folder later renamed in case alone should still work.
+     */
+    private Object runRequestByPath(String requestPath) throws Exception {
+        if (currentCollection == null || requestPath == null) return null;
+        String want = requestPath.trim().replace('\\', '/');
+        if (want.isEmpty()) return null;
+
+        java.util.List<RequestItem> all = flattenRequests(
+            currentCollection.item, "",
+            currentCollection.info != null ? currentCollection.info.name : null);
+
+        RequestItem match = null;
+        for (RequestItem it : all) {
+            if (it.path != null && it.path.equalsIgnoreCase(want)) { match = it; break; }
+        }
+        if (match == null) {
+            // Paths carry the collection wrapper as their first segment, but a
+            // script inside the collection writes paths relative to it.
+            for (RequestItem it : all) {
+                if (it.path == null) continue;
+                int slash = it.path.indexOf('/');
+                String relative = slash >= 0 ? it.path.substring(slash + 1) : it.path;
+                if (relative.equalsIgnoreCase(want)) { match = it; break; }
+            }
+        }
+        if (match == null) {
+            for (RequestItem it : all) {
+                if (it.path != null && it.path.toLowerCase(java.util.Locale.ROOT)
+                        .endsWith("/" + want.toLowerCase(java.util.Locale.ROOT))) { match = it; break; }
+            }
+        }
+        if (match == null) {
+            for (RequestItem it : all) {
+                if (it.name != null && it.name.equalsIgnoreCase(want)) { match = it; break; }
+            }
+        }
+        if (match == null) return null;
+
+        ui.appendLog("↪ bru.runRequest(\"" + want + "\") → " + match.path);
+        AnalyzedRequest ar = new AnalyzedRequest(
+            match.name, match.path, match.request,
+            currentCollection.info != null ? currentCollection.info.name : "Collection",
+            null);
+        runAnalyzedAsPreview(ar, true);
+        burp.models.ExecutedRequest response = consumeLastProcessedRequest();
+        if (response != null) {
+            ui.appendLog("↩ bru.runRequest(\"" + match.name + "\") → HTTP "
+                + response.getStatusCode());
+        }
+        // Non-null even without a response, so the caller can tell "ran" from
+        // "no such request" — the latter is a typo the author needs to see.
+        return response != null ? response : Boolean.TRUE;
+    }
+
     /** Extract the collection-wrapper name (top-level path segment) from a
      *  request's full path, used as the variable scope key. */
     private static String scopeFromPath(String path) {
@@ -3712,12 +3774,116 @@ public class PostmanImporter {
         return slash >= 0 ? path.substring(0, slash) : path;
     }
 
+    /**
+     * Headers inherited from the collection and every folder above
+     * {@code requestPath}, outermost first.
+     *
+     * <p>Mirrors {@link #getScriptsForPath}'s prefix-matching walk so an item
+     * whose own name contains a slash still resolves.
+     */
+    public java.util.List<PostmanCollection.Header> getHeadersForPath(String requestPath) {
+        java.util.List<PostmanCollection.Header> out = new java.util.ArrayList<>();
+        if (currentCollection == null) return out;
+        if (currentCollection.folderHeaders != null) out.addAll(currentCollection.folderHeaders);
+        if (requestPath == null || requestPath.isEmpty()) return out;
+
+        java.util.List<PostmanCollection.Item> level = currentCollection.item;
+        String remaining = requestPath;
+        while (remaining != null && !remaining.isEmpty() && level != null) {
+            PostmanCollection.Item match = null;
+            String matchedName = null;
+            for (PostmanCollection.Item it : level) {
+                if (it == null || it.name == null) continue;
+                String name = it.name;
+                if (remaining.equals(name)) { match = it; matchedName = name; break; }
+                if (remaining.startsWith(name + "/")
+                        && (match == null || name.length() > matchedName.length())) {
+                    match = it;
+                    matchedName = name;
+                }
+            }
+            if (match == null) break;
+            if (match.folderHeaders != null) out.addAll(match.folderHeaders);
+            if (remaining.equals(matchedName)) break;
+            remaining = remaining.substring(matchedName.length() + 1);
+            level = match.item;
+        }
+        return out;
+    }
+
+    /**
+     * Adds inherited folder headers to {@code request}, without displacing
+     * anything the request sets itself.
+     *
+     * <p>Nearest wins: a request's own header beats its folder's, and an inner
+     * folder beats an outer one. A disabled inherited header is skipped rather
+     * than added switched-off, so it cannot later be re-enabled by accident.
+     */
+    private void applyInheritedHeaders(PostmanCollection.Request request, String path) {
+        if (request == null) return;
+        java.util.List<PostmanCollection.Header> inherited = getHeadersForPath(path);
+        if (inherited.isEmpty()) return;
+
+        if (request.header == null) request.header = new java.util.ArrayList<>();
+        java.util.Set<String> present = new java.util.HashSet<>();
+        for (PostmanCollection.Header h : request.header) {
+            if (h != null && h.key != null) present.add(h.key.trim().toLowerCase(java.util.Locale.ROOT));
+        }
+
+        int added = 0;
+        // Walk inner-to-outer so the nearest declaration of a repeated header
+        // is the one that lands.
+        for (int i = inherited.size() - 1; i >= 0; i--) {
+            PostmanCollection.Header src = inherited.get(i);
+            if (src == null || src.key == null || src.key.trim().isEmpty()) continue;
+            if (src.disabled) continue;
+            String key = src.key.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!present.add(key)) continue;
+            PostmanCollection.Header copy = new PostmanCollection.Header();
+            copy.key = src.key;
+            copy.value = src.value;
+            copy.description = src.description;
+            copy.disabled = false;
+            request.header.add(copy);
+            added++;
+        }
+        if (added > 0) {
+            ui.appendLog("🧬 Inherited " + added + " folder header(s) for " + path);
+        }
+    }
+
     private void processRequest(RequestItem item, String destination) throws Exception {
         processRequest(item, destination, false);
     }
     
     private void processRequest(RequestItem item, String destination, boolean withAuth) throws Exception {
         if (analyzeStopRequested) throw new InterruptedException("Stopped");
+        // Install the request runner here rather than only in the batch worker,
+        // so bru.runRequest() behaves identically whether the user pressed Run
+        // or sent this one request on its own. Saved and restored because a
+        // script's runRequest() re-enters this method.
+        burp.service.RhinoScriptEngine.RequestRunner previousRunner =
+            burp.service.RhinoScriptEngine.REQUEST_RUNNER_THREADLOCAL.get();
+        burp.service.RhinoScriptEngine.REQUEST_RUNNER_THREADLOCAL.set(this::runRequestByPath);
+        try {
+            processRequestInner(item, destination, withAuth);
+        } finally {
+            if (previousRunner == null) {
+                burp.service.RhinoScriptEngine.REQUEST_RUNNER_THREADLOCAL.remove();
+            } else {
+                burp.service.RhinoScriptEngine.REQUEST_RUNNER_THREADLOCAL.set(previousRunner);
+            }
+        }
+    }
+
+    private void processRequestInner(RequestItem item, String destination, boolean withAuth) throws Exception {
+        // Fold in folder/collection headers first, so the pre-request script
+        // sees the same request the server will.
+        try {
+            applyInheritedHeaders(item.request, item.path);
+        } catch (Exception e) {
+            ui.appendLog("⚠️ Folder header inheritance failed for " + item.name + ": " + e.getMessage());
+        }
         // --- Pre-request scripts (cascaded collection→folder→request) ---
         String[] cascadedScripts = null;
         try {
