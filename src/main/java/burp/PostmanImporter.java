@@ -487,6 +487,62 @@ public class PostmanImporter {
             if (src == null) { callback.accept(null); return; }
             autoFetchFromJwt(src, callback);
         });
+        burp.service.ScriptExecutor.setOAuth2CredentialSupplier(this::collectOAuth2CredentialVariables);
+    }
+
+    /**
+     * Exposes fetched OAuth 2.0 tokens under the names Bruno scripts expect, i.e.
+     * {@code $oauth2.<credentialsId>.access_token}. Bruno collections routinely copy the token
+     * into an environment variable this way, and without these entries the script fails on an
+     * undefined lookup.
+     */
+    private java.util.Map<String, String> collectOAuth2CredentialVariables() {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (authManager == null) return out;
+
+        String fallbackToken = null;
+        try {
+            fallbackToken = authManager.getAccessToken();
+        } catch (Exception ignore) {
+        }
+
+        try {
+            java.util.List<burp.auth.OAuth2Config> configs = authManager.getOAuth2Configs();
+            if (configs != null) {
+                for (burp.auth.OAuth2Config config : configs) {
+                    if (config == null || config.rawAttributes == null) continue;
+                    String credentialsId = firstNonBlank(
+                        config.rawAttributes.get("credentialsId"),
+                        config.rawAttributes.get("credentialId"),
+                        "credentials");
+                    String token = firstNonBlank(config.rawAttributes.get("accessToken"), fallbackToken);
+                    if (token == null) continue;
+                    String prefix = "$oauth2." + credentialsId + ".";
+                    out.put(prefix + "access_token", token);
+                    putIfPresent(out, prefix + "refresh_token", config.rawAttributes.get("refreshToken"));
+                    putIfPresent(out, prefix + "id_token", config.rawAttributes.get("idToken"));
+                }
+            }
+        } catch (Exception ignore) {
+        }
+
+        // A collection whose credentialsId we never saw still needs the default name to work.
+        if (fallbackToken != null && !fallbackToken.isEmpty()) {
+            out.putIfAbsent("$oauth2.credentials.access_token", fallbackToken);
+        }
+        return out;
+    }
+
+    private static void putIfPresent(java.util.Map<String, String> target, String key, String value) {
+        if (value != null && !value.trim().isEmpty()) target.put(key, value);
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return null;
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) return value.trim();
+        }
+        return null;
     }
     public enum AuthSource {
         REQUEST,

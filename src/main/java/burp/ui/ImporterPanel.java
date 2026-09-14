@@ -1137,13 +1137,17 @@ public class ImporterPanel {
                     clone.body.graphql.variables = pmRequest.body.graphql.variables;
                 }
                 
-                // Also clone urlencoded entries (OAuth token requests etc.) with variable resolution
+                // Form fields keep their {{var}} templates for the same variable-visibility
+                // reason as body.raw above: resolving here would hide which variable feeds a
+                // field, and a variable that resolves to empty would erase the reference
+                // entirely, leaving a blank cell with no way to tell what was meant. Both
+                // urlencoded and form-data bodies are resolved per field at send time.
                 if (pmRequest.body.urlencoded != null) {
                     clone.body.urlencoded = new java.util.ArrayList<>();
                     for (burp.models.PostmanCollection.UrlEncoded ue : pmRequest.body.urlencoded) {
                         burp.models.PostmanCollection.UrlEncoded copy = new burp.models.PostmanCollection.UrlEncoded();
-                        copy.key = resolver != null ? resolver.resolve(ue.key) : ue.key;
-                        copy.value = resolver != null ? resolver.resolve(ue.value) : ue.value;
+                        copy.key = ue.key;
+                        copy.value = ue.value;
                         copy.disabled = ue.disabled;
                         clone.body.urlencoded.add(copy);
                     }
@@ -1154,8 +1158,8 @@ public class ImporterPanel {
                     clone.body.formdata = new java.util.ArrayList<>();
                     for (burp.models.PostmanCollection.FormData fd : pmRequest.body.formdata) {
                         burp.models.PostmanCollection.FormData copy = new burp.models.PostmanCollection.FormData();
-                        copy.key = resolver != null ? resolver.resolve(fd.key) : fd.key;
-                        copy.value = resolver != null ? resolver.resolve(fd.value) : fd.value;
+                        copy.key = fd.key;
+                        copy.value = fd.value;
                         copy.type = fd.type;
                         copy.src = fd.src;
                         copy.disabled = fd.disabled;

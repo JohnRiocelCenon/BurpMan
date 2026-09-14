@@ -11,6 +11,7 @@ public class ScriptContext {
    private Map<String, String> environmentVariables = new HashMap<>();
    private Map<String, String> collectionVariables = new HashMap<>();
    private Map<String, String> globalVariables = new HashMap<>();
+   private Map<String, String> oauth2CredentialVariables = new java.util.LinkedHashMap<>();
    private StringBuilder consoleOutput = new StringBuilder();
 
    public PostmanCollection.Request getRequest() {
@@ -43,6 +44,18 @@ public class ScriptContext {
 
    public void setCollectionVariables(Map<String, String> vars) {
       this.collectionVariables = vars;
+   }
+
+   /**
+    * OAuth 2.0 values a script can read back after a token fetch, keyed the way Bruno names
+    * them, e.g. {@code $oauth2.<credentialsId>.access_token}.
+    */
+   public Map<String, String> getOauth2CredentialVariables() {
+      return this.oauth2CredentialVariables;
+   }
+
+   public void setOauth2CredentialVariables(Map<String, String> vars) {
+      this.oauth2CredentialVariables = vars == null ? new java.util.LinkedHashMap<>() : vars;
    }
 
    public Map<String, String> getGlobalVariables() {

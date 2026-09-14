@@ -152,6 +152,17 @@ public class ScriptExecutor {
     // Static high-level entry points
     // ============================================================
 
+    /**
+     * Supplies the OAuth 2.0 values a script can read back after a token fetch. Installed by the
+     * importer, which owns the auth manager holding the fetched tokens.
+     */
+    private static volatile java.util.function.Supplier<java.util.Map<String, String>> OAUTH_CREDENTIALS;
+
+    public static void setOAuth2CredentialSupplier(
+            java.util.function.Supplier<java.util.Map<String, String>> supplier) {
+        OAUTH_CREDENTIALS = supplier;
+    }
+
     public static void runAndApply(String script, VariableResolver resolver) {
         runAndApply(script, resolver, null, null);
     }
@@ -180,6 +191,14 @@ public class ScriptExecutor {
         }
         if (response != null) ctx.setExecutedRequest(response);
         if (currentRequest != null) ctx.setRequest(currentRequest);
+        java.util.function.Supplier<java.util.Map<String, String>> credentials = OAUTH_CREDENTIALS;
+        if (credentials != null) {
+            try {
+                ctx.setOauth2CredentialVariables(credentials.get());
+            } catch (Exception ignore) {
+                // A missing credential map must not stop the script from running.
+            }
+        }
         boolean engineRan = false;
         String preview = script.length() > 80 ? script.substring(0, 80).replace('\n',' ') + "…" : script.replace('\n',' ');
         diag("runAndApply (engine=" + exec.isAvailable() + ", len=" + script.length()

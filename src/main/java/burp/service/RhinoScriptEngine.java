@@ -125,8 +125,24 @@ public final class RhinoScriptEngine {
             // Bruno-native bindings: scripts use bare `req` / `res` (no
             // pm.* prefix), `test(name, fn)` to register test cases, and
             // `expect(value).to.equal(...)` Chai-style assertions.
-            ScriptableObject.putProperty(scope, "req",
-                Context.javaToJS(new BrunoReqHost(currentRequest, ctx), scope));
+            BrunoReqHost brunoReq = new BrunoReqHost(currentRequest, ctx);
+            // `req.req.oauth2CredentialVariables[...]` is how Bruno collections read a token
+            // back after an OAuth fetch. A real JS object is used rather than a wrapped Java
+            // Map so bracket indexing works.
+            NativeObject rawReq = new NativeObject();
+            ScriptRuntime.setObjectProtoAndParent(rawReq, scope);
+            NativeObject oauthVars = new NativeObject();
+            ScriptRuntime.setObjectProtoAndParent(oauthVars, scope);
+            java.util.Map<String, String> credentialVars = ctx.getOauth2CredentialVariables();
+            if (credentialVars != null) {
+                for (java.util.Map.Entry<String, String> e : credentialVars.entrySet()) {
+                    if (e.getKey() == null) continue;
+                    oauthVars.put(e.getKey(), oauthVars, e.getValue() == null ? "" : e.getValue());
+                }
+            }
+            rawReq.put("oauth2CredentialVariables", rawReq, oauthVars);
+            brunoReq.setRawRequest(rawReq);
+            ScriptableObject.putProperty(scope, "req", Context.javaToJS(brunoReq, scope));
             ExecutedRequest bResp = ctx.getExecutedRequest();
             BrunoResHost resHost = new BrunoResHost(bResp, scope);
             ScriptableObject.putProperty(scope, "res",
@@ -2576,6 +2592,7 @@ public final class RhinoScriptEngine {
     public static final class BrunoReqHost {
         private final PostmanCollection.Request request;
         private final ScriptContext ctx;
+        private Object rawRequest;
         public final HeadersHost headers;
         private int maxRedirects = 5;
         private int timeout = 0;
@@ -2584,6 +2601,18 @@ public final class RhinoScriptEngine {
         BrunoReqHost(PostmanCollection.Request r, ScriptContext c) {
             this.request = r; this.ctx = c;
             this.headers = new HeadersHost(r);
+        }
+
+        /**
+         * Bruno scripts reach the underlying request through {@code req.req}, most often to read
+         * {@code oauth2CredentialVariables} after a token fetch.
+         */
+        public Object getReq() {
+            return this.rawRequest != null ? this.rawRequest : this;
+        }
+
+        void setRawRequest(Object raw) {
+            this.rawRequest = raw;
         }
         public String getName() {
             try { return ctx.getRequest() != null ? "" : ""; } catch (Throwable ignore) { return ""; }
