@@ -96,27 +96,6 @@ public class OAuth2RequestFactory {
       return sb.toString();
    }
 
-   /**
-    * Browsers that integrate with the OS sign-in, such as Edge on a domain-joined machine, will
-    * authenticate silently and skip the account prompt entirely. Asking the provider for an
-    * account prompt keeps the tester in control of which identity is used.
-    *
-    * @return the prompt value to send, or null to leave it out
-    */
-   String resolvePromptParameter(OAuth2Config config) {
-      if (config == null || config.rawAttributes == null) return null;
-      for (String key : new String[]{"prompt", "Prompt"}) {
-         String explicit = config.rawAttributes.get(key);
-         if (explicit != null && !explicit.trim().isEmpty()) {
-            return explicit.trim();
-         }
-      }
-      String forced = config.rawAttributes.get("forceAccountPrompt");
-      boolean force = forced == null || forced.trim().isEmpty()
-         || "true".equalsIgnoreCase(forced.trim()) || "1".equals(forced.trim());
-      return force ? "select_account" : null;
-   }
-
    public String buildAuthorizationRequestUrl(OAuth2Config config, String codeChallenge, String stateOverride) throws Exception {
       if (config == null) {
          throw new IllegalArgumentException("OAuth2 config is required.");
@@ -156,11 +135,43 @@ public class OAuth2RequestFactory {
       return qs.isEmpty() ? resolvedAuthUrl : resolvedAuthUrl + sep + qs;
    }
 
+   /**
+    * Browsers that integrate with the OS sign-in, such as Edge on a domain-joined machine, will
+    * offer the Windows account and skip straight past the credential page. Asking the provider
+    * to re-authenticate keeps the tester in control of which identity is used.
+    *
+    * @return the prompt value to send, or null to leave it out
+    */
+   String resolvePromptParameter(OAuth2Config config) {
+      if (config == null || config.rawAttributes == null) return null;
+      for (String key : new String[]{"prompt", "Prompt"}) {
+         String explicit = config.rawAttributes.get(key);
+         if (explicit != null && !explicit.trim().isEmpty()) {
+            return explicit.trim();
+         }
+      }
+      String forced = config.rawAttributes.get("forceAccountPrompt");
+      boolean force = forced == null || forced.trim().isEmpty()
+         || "true".equalsIgnoreCase(forced.trim()) || "1".equals(forced.trim());
+      // "login" forces the credential page; "select_account" would still let a browser tied to
+      // the desktop session offer that account for one-click sign-in.
+      return force ? "login" : null;
+   }
+
    public HttpRequest buildAuthorizationCodeTokenRequest(OAuth2Config config, String authorizationCode) throws Exception {
       return this.buildAuthorizationCodeTokenRequest(config, authorizationCode, null);
    }
 
    public HttpRequest buildAuthorizationCodeTokenRequest(OAuth2Config config, String authorizationCode, String codeVerifier) throws Exception {
+      String rawRequest = this.buildAuthorizationCodeTokenRequestText(config, authorizationCode, codeVerifier);
+      String resolvedUrl = this.resolver.resolve(config.accessTokenUrl);
+      HttpUtils.HostInfo hostInfo = HttpUtils.parseUrl(resolvedUrl);
+      HttpService service = HttpService.httpService(hostInfo.host, hostInfo.port, hostInfo.useHttps);
+      return HttpRequest.httpRequest(service, ByteArray.byteArray(rawRequest.getBytes(StandardCharsets.UTF_8)));
+   }
+
+   /** Assembles the redemption request as raw HTTP, separate from Burp's object factory. */
+   String buildAuthorizationCodeTokenRequestText(OAuth2Config config, String authorizationCode, String codeVerifier) throws Exception {
       if (config == null) {
          throw new IllegalArgumentException("OAuth2 config is required.");
       } else if (authorizationCode == null || authorizationCode.trim().isEmpty()) {
@@ -210,9 +221,7 @@ public class OAuth2RequestFactory {
       String body = String.join("&", params);
       HttpUtils.HostInfo hostInfo = HttpUtils.parseUrl(resolvedUrl);
       String path = this.extractPath(resolvedUrl);
-      String rawRequest = this.buildRawRequest(path, hostInfo, body, authHeader);
-      HttpService service = HttpService.httpService(hostInfo.host, hostInfo.port, hostInfo.useHttps);
-      return HttpRequest.httpRequest(service, ByteArray.byteArray(rawRequest.getBytes(StandardCharsets.UTF_8)));
+      return this.buildRawRequest(path, hostInfo, body, authHeader, originOf(redirectUri));
    }
 
    public boolean isBrowserInteractiveFlow(OAuth2Config config) {
@@ -344,11 +353,47 @@ public class OAuth2RequestFactory {
    }
 
    private String buildRawRequest(String path, HttpUtils.HostInfo hostInfo, String body, String authHeader) {
+      return this.buildRawRequest(path, hostInfo, body, authHeader, null);
+   }
+
+   /**
+    * Derives the web origin of a redirect URI, i.e. scheme, host and any non-default port.
+    *
+    * @return the origin, or null when one cannot be formed
+    */
+   static String originOf(String redirectUri) {
+      if (redirectUri == null || redirectUri.trim().isEmpty()) return null;
+      try {
+         java.net.URI uri = java.net.URI.create(redirectUri.trim());
+         String scheme = uri.getScheme();
+         String host = uri.getHost();
+         if (scheme == null || host == null) return null;
+         scheme = scheme.toLowerCase(Locale.ROOT);
+         if (!"http".equals(scheme) && !"https".equals(scheme)) return null;
+         int port = uri.getPort();
+         boolean defaultPort = port < 0
+            || ("https".equals(scheme) && port == 443)
+            || ("http".equals(scheme) && port == 80);
+         return defaultPort
+            ? scheme + "://" + host.toLowerCase(Locale.ROOT)
+            : scheme + "://" + host.toLowerCase(Locale.ROOT) + ":" + port;
+      } catch (Exception ex) {
+         return null;
+      }
+   }
+
+   private String buildRawRequest(String path, HttpUtils.HostInfo hostInfo, String body, String authHeader, String origin) {
       StringBuilder raw = new StringBuilder();
       raw.append("POST ").append(path).append(" HTTP/1.1\r\n");
       raw.append("Host: ").append(this.buildHostHeader(hostInfo)).append("\r\n");
       if (authHeader != null) {
          raw.append("Authorization: ").append(authHeader).append("\r\n");
+      }
+      // A redirect URI registered as a single-page application is only redeemable on a request
+      // the provider considers cross-origin. Entra rejects it as AADSTS9002327 otherwise, and
+      // providers that do not care simply ignore the header.
+      if (origin != null && !origin.isEmpty()) {
+         raw.append("Origin: ").append(origin).append("\r\n");
       }
 
       raw.append("Content-Type: application/x-www-form-urlencoded\r\n");
