@@ -635,11 +635,75 @@ public class BrunoParser {
                }
             );
             break;
+         case "oauth2":
+            auth.oauth2 = this.brunoOAuth2Attributes(authObject);
+            break;
          default:
             break;
       }
 
       return auth;
+   }
+
+   /**
+    * Flattens Bruno's {@code oauth2} object into the key/value attribute list
+    * the rest of the app reads.
+    *
+    * <p>Without this the auth type was recorded as {@code oauth2} but every
+    * field arrived empty, so the OAuth2 dialog opened blank and the token
+    * request failed with "OAuth2 config is missing auth URL" - pointing at the
+    * collection rather than at the parser that dropped its contents.
+    *
+    * <p>Bruno's names are passed through as-is, since {@code OAuth2Detector}
+    * already accepts {@code authorizationUrl} and {@code callbackUrl}
+    * alongside Postman's spellings. The few that have no counterpart are
+    * translated: {@code credentialsPlacement} carries what Postman calls
+    * {@code client_authentication}, and {@code tokenPlacement} what it calls
+    * {@code addTokenTo}.
+    */
+   private List<PostmanCollection.AuthAttribute> brunoOAuth2Attributes(JsonObject authObject) {
+      JsonObject o = authObject.has("oauth2") && authObject.get("oauth2").isJsonObject()
+         ? authObject.getAsJsonObject("oauth2")
+         : authObject;
+
+      List<PostmanCollection.AuthAttribute> out = new ArrayList<>();
+      for (Map.Entry<String, JsonElement> e : o.entrySet()) {
+         String key = e.getKey();
+         if (key == null || key.trim().isEmpty()) continue;
+         JsonElement v = e.getValue();
+         if (v == null || v.isJsonNull()) continue;
+         // additionalParameters is a nested structure, not a scalar setting;
+         // flattening it here would produce meaningless attribute values.
+         if ("additionalParameters".equals(key)) continue;
+         if (v.isJsonObject() || v.isJsonArray()) continue;
+
+         String value = this.stringValue(v);
+         if (value == null) continue;
+         addAuthAttribute(out, key, value);
+
+         // Aliases for the names Postman uses, so either spelling resolves.
+         if ("credentialsPlacement".equals(key)) {
+            addAuthAttribute(out, "client_authentication",
+               "basic_auth_header".equalsIgnoreCase(value) ? "header" : value);
+         } else if ("tokenPlacement".equals(key)) {
+            addAuthAttribute(out, "addTokenTo", value);
+         } else if ("tokenHeaderPrefix".equals(key)) {
+            addAuthAttribute(out, "headerPrefix", value);
+         }
+      }
+      return out;
+   }
+
+   private static void addAuthAttribute(List<PostmanCollection.AuthAttribute> out,
+                                        String key, String value) {
+      for (PostmanCollection.AuthAttribute existing : out) {
+         if (existing.key != null && existing.key.equalsIgnoreCase(key)) return;
+      }
+      PostmanCollection.AuthAttribute attr = new PostmanCollection.AuthAttribute();
+      attr.key = key;
+      attr.value = value;
+      attr.type = "string";
+      out.add(attr);
    }
 
    private List<PostmanCollection.Event> parseBrunoJsonScripts(JsonObject requestObject, JsonObject itemObject) {
