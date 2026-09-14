@@ -256,7 +256,73 @@ public class BrunoParser {
             }
          }
          this.parseBrunoJsonItems(items, collection.item);
+         this.applyEmbeddedEnvironments(root, collection);
          return collection;
+      }
+   }
+
+   /**
+    * Folds a Bruno JSON export's embedded {@code environments} array into the
+    * collection's variables.
+    *
+    * <p>Unlike Postman, Bruno's single-file export carries its environments
+    * inside the collection itself, and Bruno resolves against them on load.
+    * Ignoring the array meant a user who opened the one file they were given
+    * saw every {{var}} unresolved and had to know a second environment file
+    * existed somewhere - the collection looked broken rather than unconfigured.
+    *
+    * <p>These land as collection variables, the lowest precedence tier, so
+    * explicitly loading an environment file still overrides them. When the
+    * export names an {@code activeEnvironmentUid} that environment wins;
+    * otherwise the first is used, matching what Bruno shows on open.
+    */
+   private void applyEmbeddedEnvironments(JsonObject root, PostmanCollection collection) {
+      if (root == null || !root.has("environments") || !root.get("environments").isJsonArray()) {
+         return;
+      }
+      JsonArray envs = root.getAsJsonArray("environments");
+      if (envs.size() == 0) return;
+
+      String activeUid = this.stringValue(root.get("activeEnvironmentUid"));
+      JsonObject chosen = null;
+      for (JsonElement el : envs) {
+         if (el == null || !el.isJsonObject()) continue;
+         JsonObject env = el.getAsJsonObject();
+         if (chosen == null) chosen = env;
+         if (activeUid != null && !activeUid.isEmpty()) {
+            String uid = this.stringValue(env.get("uid"));
+            if (uid == null) uid = this.stringValue(env.get("id"));
+            if (activeUid.equals(uid)) { chosen = env; break; }
+         }
+      }
+      if (chosen == null || !chosen.has("variables") || !chosen.get("variables").isJsonArray()) {
+         return;
+      }
+
+      if (collection.variable == null) collection.variable = new ArrayList<>();
+      java.util.Set<String> existing = new java.util.HashSet<>();
+      for (PostmanCollection.Variable v : collection.variable) {
+         if (v != null && v.key != null) existing.add(v.key);
+      }
+
+      for (JsonElement el : chosen.getAsJsonArray("variables")) {
+         if (el == null || !el.isJsonObject()) continue;
+         JsonObject v = el.getAsJsonObject();
+         String name = this.stringValue(v.get("name"));
+         if (name == null || name.trim().isEmpty()) continue;
+         if (v.has("enabled") && !v.get("enabled").isJsonNull()
+                 && !v.get("enabled").getAsBoolean()) {
+            continue;
+         }
+         // A variable the collection already declares wins - the export's
+         // environment is a default, not an override.
+         if (!existing.add(name.trim())) continue;
+         PostmanCollection.Variable variable = new PostmanCollection.Variable();
+         variable.key = name.trim();
+         variable.value = this.stringValue(v.get("value"));
+         variable.type = (v.has("secret") && !v.get("secret").isJsonNull()
+                 && v.get("secret").getAsBoolean()) ? "secret" : "text";
+         collection.variable.add(variable);
       }
    }
 
