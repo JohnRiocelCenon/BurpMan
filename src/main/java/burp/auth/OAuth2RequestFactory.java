@@ -75,6 +75,49 @@ public class OAuth2RequestFactory {
    }
 
    public String buildAuthorizationRequestUrl(OAuth2Config config, String codeChallenge) throws Exception {
+      return this.buildAuthorizationRequestUrl(config, codeChallenge, null);
+   }
+
+   /**
+    * Returns the state to send. A configured value is used as-is; otherwise a random one is
+    * generated so the authorization response can still be tied back to this request.
+    */
+   public String resolveOrGenerateState(OAuth2Config config) {
+      String configured = config == null ? null : this.resolver.resolve(config.state);
+      if (configured != null && !configured.trim().isEmpty() && !configured.contains("{{")) {
+         return configured.trim();
+      }
+      byte[] bytes = new byte[16];
+      new java.security.SecureRandom().nextBytes(bytes);
+      StringBuilder sb = new StringBuilder(bytes.length * 2);
+      for (byte b : bytes) {
+         sb.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+      }
+      return sb.toString();
+   }
+
+   /**
+    * Browsers that integrate with the OS sign-in, such as Edge on a domain-joined machine, will
+    * authenticate silently and skip the account prompt entirely. Asking the provider for an
+    * account prompt keeps the tester in control of which identity is used.
+    *
+    * @return the prompt value to send, or null to leave it out
+    */
+   String resolvePromptParameter(OAuth2Config config) {
+      if (config == null || config.rawAttributes == null) return null;
+      for (String key : new String[]{"prompt", "Prompt"}) {
+         String explicit = config.rawAttributes.get(key);
+         if (explicit != null && !explicit.trim().isEmpty()) {
+            return explicit.trim();
+         }
+      }
+      String forced = config.rawAttributes.get("forceAccountPrompt");
+      boolean force = forced == null || forced.trim().isEmpty()
+         || "true".equalsIgnoreCase(forced.trim()) || "1".equals(forced.trim());
+      return force ? "select_account" : null;
+   }
+
+   public String buildAuthorizationRequestUrl(OAuth2Config config, String codeChallenge, String stateOverride) throws Exception {
       if (config == null) {
          throw new IllegalArgumentException("OAuth2 config is required.");
       } else if (config.authUrl == null || config.authUrl.trim().isEmpty()) {
@@ -85,7 +128,9 @@ public class OAuth2RequestFactory {
       String clientId = this.resolver.resolve(config.clientId);
       String scope = this.resolver.resolve(config.scope);
       String redirectUri = this.resolveCallbackUrl(config, true);
-      String state = this.resolver.resolve(config.state);
+      String state = stateOverride != null && !stateOverride.trim().isEmpty()
+         ? stateOverride.trim()
+         : this.resolver.resolve(config.state);
       String audience = this.resolveRawAttr(config, "audience");
       if (clientId != null && clientId.contains("{{")) {
          throw new IllegalStateException("Unresolved client_id: " + clientId);
@@ -101,6 +146,10 @@ public class OAuth2RequestFactory {
       if (codeChallenge != null && !codeChallenge.trim().isEmpty()) {
          this.add(params, "code_challenge", codeChallenge.trim());
          this.add(params, "code_challenge_method", "S256");
+      }
+      String prompt = this.resolvePromptParameter(config);
+      if (prompt != null) {
+         this.add(params, "prompt", prompt);
       }
       String sep = resolvedAuthUrl.contains("?") ? "&" : "?";
       String qs = String.join("&", params);
