@@ -273,10 +273,14 @@ public final class ChromiumOAuthBrowser {
       command.add("--disable-background-networking");
       command.add("--disable-popup-blocking");
       command.add("--window-size=520,760");
-      // Edge on a domain-joined machine would otherwise sign in silently with the Windows
-      // account and never show a prompt, hiding whose identity is being used.
-      command.add("--disable-features=msSingleSignOn,AadSso");
+      // Edge on a domain-joined machine otherwise offers the Windows account for one-click
+      // sign-in, hiding whose identity is being used. These turn off its identity integration
+      // so the provider's own credential page is what appears. Chromium honours only the last
+      // --disable-features, so every flag has to live in this one switch.
+      command.add("--disable-features=msSingleSignOn,AadSso,msImplicitSignin,msEdgeAutoSignIn,"
+         + "msAccountProfileSync,msIdentityManager,WebViewWindowsSSO,msWebOAuthTokenBroker");
       command.add("--auth-server-allowlist=_no_integrated_auth_");
+      command.add("--auth-negotiate-delegate-allowlist=_none_");
       // Stopping the callback from actually loading keeps its query string on screen. Single
       // page apps routinely read the code and immediately rewrite the URL, which would
       // otherwise erase the only copy of it before we look.

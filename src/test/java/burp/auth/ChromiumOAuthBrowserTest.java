@@ -90,11 +90,11 @@ class ChromiumOAuthBrowserTest {
    }
 
    @Test
-   @DisplayName("an account prompt is requested by default so silent SSO cannot pick the identity")
+   @DisplayName("the sign-in page is forced by default so silent SSO cannot pick the identity")
    void asksForAccountPromptByDefault() {
       OAuth2RequestFactory factory = new OAuth2RequestFactory(new burp.parser.VariableResolver());
       OAuth2Config config = new OAuth2Config();
-      assertEquals("select_account", factory.resolvePromptParameter(config));
+      assertEquals("login", factory.resolvePromptParameter(config));
    }
 
    @Test
@@ -131,7 +131,8 @@ class ChromiumOAuthBrowserTest {
       assertTrue(url.contains("state=STATE456"));
       assertTrue(url.contains("code_challenge=CHALLENGE123"));
       assertTrue(url.contains("code_challenge_method=S256"));
-      assertTrue(url.contains("prompt=select_account"));
+      assertTrue(url.contains("prompt=login"));
       assertTrue(url.contains("redirect_uri=https%3A%2F%2Fuat.example.com%2Fapp-callback"));
    }
 }
+
