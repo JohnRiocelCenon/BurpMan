@@ -59,6 +59,8 @@ public class OAuth2ConfigDialog extends JDialog {
    private final JTextField tokenName = new JTextField();
    private final JComboBox<String> grantType = new JComboBox<>(GRANT_TYPES);
    private final JTextField callbackUrl = new JTextField();
+   private final javax.swing.JCheckBox useSystemBrowser = new javax.swing.JCheckBox("Use system browser for OAuth");
+   private final javax.swing.JCheckBox forceAccountPrompt = new javax.swing.JCheckBox("Always ask which account to sign in with");
    private final JTextField authUrl = new JTextField();
    private final JTextField accessTokenUrl = new JTextField();
    private final JTextField clientId = new JTextField();
@@ -135,6 +137,15 @@ public class OAuth2ConfigDialog extends JDialog {
       this.addRow(p, gc, "Token Name:", this.tokenName);
       this.addRow(p, gc, "Grant Type:", this.grantType);
       this.addRow(p, gc, "Callback URL:", this.callbackUrl);
+      this.useSystemBrowser.setToolTipText(
+         "Off (recommended): BurpMan opens its own Chromium window and reads the callback directly, "
+            + "so the code is captured even when the callback host is unreachable and nothing is proxied. "
+            + "On: your normal browser is used and you paste the redirected URL back.");
+      this.addRow(p, gc, "", this.useSystemBrowser);
+      this.forceAccountPrompt.setToolTipText(
+         "Sends prompt=select_account so the provider always shows the sign-in screen. Without it, a "
+            + "browser tied to your Windows login can authenticate silently as that account.");
+      this.addRow(p, gc, "", this.forceAccountPrompt);
       this.addRow(p, gc, "Auth URL:", this.authUrl);
       this.addRow(p, gc, "Access Token URL:", this.accessTokenUrl);
       this.addRow(p, gc, "Client ID:", this.clientId);
@@ -212,6 +223,8 @@ public class OAuth2ConfigDialog extends JDialog {
          this.tokenName.setText(nullSafe(this.config.name));
          selectOrAdd(this.grantType, this.config.grantType);
          this.callbackUrl.setText(this.resolve(this.config.callbackUrl));
+         this.useSystemBrowser.setSelected(readSystemBrowserPreference(this.config));
+         this.forceAccountPrompt.setSelected(readForceAccountPrompt(this.config));
          this.authUrl.setText(this.resolve(this.config.authUrl));
          this.accessTokenUrl.setText(this.resolve(this.config.accessTokenUrl));
          this.clientId.setText(this.resolve(this.config.clientId));
@@ -321,6 +334,10 @@ public class OAuth2ConfigDialog extends JDialog {
 
          this.config.name = textOrNull(this.tokenName);
          this.config.grantType = (String)this.grantType.getSelectedItem();
+         if (this.config.rawAttributes != null) {
+            this.config.rawAttributes.put("useSystemBrowser", Boolean.toString(this.useSystemBrowser.isSelected()));
+            this.config.rawAttributes.put("forceAccountPrompt", Boolean.toString(this.forceAccountPrompt.isSelected()));
+         }
          this.config.clientAuthenticationMethod = (String)this.clientAuthMethod.getSelectedItem();
          this.propagateFieldEdit(rawClientId, this.origClientId, newClientId);
          this.propagateFieldEdit(rawClientSecret, this.origClientSecret, newClientSecret);
@@ -443,75 +460,79 @@ public class OAuth2ConfigDialog extends JDialog {
    private void runTokenViaBrowser(OAuth2RequestFactory factory) {
       try {
          OAuth2RequestFactory.PkcePair pkce = factory.generatePkcePair();
-         String authRequestUrl = factory.buildAuthorizationRequestUrl(this.config, pkce.challenge);
+         String oauthState = factory.resolveOrGenerateState(this.config);
+         String authRequestUrl = factory.buildAuthorizationRequestUrl(this.config, pkce.challenge, oauthState);
          String callbackUrl = factory.resolveBrowserCallbackUrl(this.config);
-         String code = null;
-         long captureStartMillis = System.currentTimeMillis();
-         boolean canAutoCapture = OAuthBrowserCallbackServer.canAutoCapture(callbackUrl);
-         boolean canProxyCapture = OAuthProxyCallbackCapture.canCapture(callbackUrl);
-         int waitBudgetSeconds =
-            (canAutoCapture ? OAUTH_BROWSER_LOCAL_CAPTURE_TIMEOUT_SECONDS : 0)
-               + (canProxyCapture ? OAUTH_BROWSER_PROXY_CAPTURE_TIMEOUT_SECONDS : 0)
-               + OAUTH_BROWSER_PROXY_FALLBACK_TIMEOUT_SECONDS;
-         boolean browserOpened = false;
 
-         if (canAutoCapture) {
-            try {
-               browserOpened = true;
-               code = OAuthBrowserCallbackServer.openBrowserAndAwaitCode(
-                  authRequestUrl,
-                  callbackUrl,
-                  OAUTH_BROWSER_LOCAL_CAPTURE_TIMEOUT_SECONDS
-               );
-            } catch (Exception ex) {
-               // Fall back to manual paste mode.
-            }
+         OAuthInteractiveCapture.Outcome outcome = OAuthInteractiveCapture.capture(
+            this.api,
+            this,
+            authRequestUrl,
+            callbackUrl,
+            oauthState,
+            readSystemBrowserPreference(this.config),
+            message -> SwingUtilities.invokeLater(() -> this.appendStatus(message))
+         );
+
+         if (outcome.cancelled()) {
+            this.postStatus("ℹ Sign-in cancelled.");
+            return;
          }
-
-         if (code == null || code.isEmpty()) {
-            if (!browserOpened) {
-               openBrowser(authRequestUrl);
-            }
-            if (canProxyCapture) {
-               try {
-                  code = OAuthProxyCallbackCapture.awaitCodeFromProxy(
-                     this.api,
-                     callbackUrl,
-                     OAUTH_BROWSER_PROXY_CAPTURE_TIMEOUT_SECONDS,
-                     captureStartMillis
-                  );
-               } catch (Exception ex) {
-                  // Fall back to manual paste mode.
-               }
-            }
-            if (code == null || code.isEmpty()) {
-               try {
-                  code = OAuthProxyCallbackCapture.awaitAnyCodeFromProxy(
-                     this.api,
-                     OAUTH_BROWSER_PROXY_FALLBACK_TIMEOUT_SECONDS,
-                     captureStartMillis
-                  );
-               } catch (Exception ex) {
-                  // Fall back to manual paste mode.
-               }
-            }
+         if (outcome.failureReason != null) {
+            this.postStatus("⚠ " + outcome.failureReason);
+            return;
          }
-
-         if (code == null || code.isEmpty()) {
-            this.appendStatus(
-               "⚠ Browser auth did not return a callback code automatically. "
-                  + "Manual paste prompt is disabled. "
-                  + "Waited about " + waitBudgetSeconds + "s. "
-                  + "Ensure callback URL/port is reachable and registered, then retry."
-            );
+         if (!outcome.hasCode() && outcome.hasAccessToken()) {
+            this.adoptAccessTokenDirectly(outcome.accessToken);
             return;
          }
 
-         HttpRequest req = factory.buildAuthorizationCodeTokenRequest(this.config, code, pkce.verifier);
+         HttpRequest req = factory.buildAuthorizationCodeTokenRequest(this.config, outcome.code, pkce.verifier);
          this.fetchTokenWithRequest(req, "oauth2-browser-fetch");
       } catch (Exception ex) {
-         this.appendStatus("❌ " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+         this.postStatus("❌ " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
       }
+   }
+
+   private void postStatus(String message) {
+      SwingUtilities.invokeLater(() -> this.appendStatus(message));
+   }
+
+   static boolean readForceAccountPrompt(OAuth2Config config) {
+      if (config == null || config.rawAttributes == null) return true;
+      String value = config.rawAttributes.get("forceAccountPrompt");
+      if (value == null || value.trim().isEmpty()) return true;
+      return "true".equalsIgnoreCase(value.trim()) || "1".equals(value.trim());
+   }
+
+   /**
+    * Bruno exposes the same choice. Unset means BurpMan drives its own browser window, which is
+    * what lets it read the callback without a proxy.
+    */
+   static boolean readSystemBrowserPreference(OAuth2Config config) {
+      if (config == null || config.rawAttributes == null) return false;
+      for (String key : new String[]{"useSystemBrowser", "systemBrowser", "use_system_browser"}) {
+         String value = config.rawAttributes.get(key);
+         if (value != null && !value.trim().isEmpty()) {
+            return "true".equalsIgnoreCase(value.trim()) || "1".equals(value.trim());
+         }
+      }
+      return false;
+   }
+
+   /** Implicit-style responses hand back a token directly, so there is nothing left to exchange. */
+   private void adoptAccessTokenDirectly(String accessToken) {
+      SwingUtilities.invokeLater(() -> {
+         this.authManager.setAccessToken(accessToken);
+         this.appendStatus("✅ Access token captured from the callback (" + accessToken.length() + " chars).");
+         try {
+            if (this.config.rawAttributes != null) {
+               this.config.rawAttributes.put("accessToken", accessToken);
+            }
+            this.refreshTokenParamsTable();
+         } catch (Exception ignored) {
+         }
+      });
    }
 
    private String resolveCallbackUrl() {

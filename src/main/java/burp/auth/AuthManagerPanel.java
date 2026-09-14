@@ -714,72 +714,39 @@ public class AuthManagerPanel extends JPanel {
     private void runBrowserOAuthFlow(OAuth2Config config, OAuth2RequestFactory factory, boolean useRepeater) {
         try {
             OAuth2RequestFactory.PkcePair pkce = factory.generatePkcePair();
-            String authUrl = factory.buildAuthorizationRequestUrl(config, pkce.challenge);
+            String oauthState = factory.resolveOrGenerateState(config);
+            String authUrl = factory.buildAuthorizationRequestUrl(config, pkce.challenge, oauthState);
             String callbackUrl = factory.resolveBrowserCallbackUrl(config);
-            String code = null;
-            long captureStartMillis = System.currentTimeMillis();
-            boolean canAutoCapture = OAuthBrowserCallbackServer.canAutoCapture(callbackUrl);
-            boolean canProxyCapture = OAuthProxyCallbackCapture.canCapture(callbackUrl);
-            int waitBudgetSeconds =
-                    (canAutoCapture ? OAUTH_BROWSER_LOCAL_CAPTURE_TIMEOUT_SECONDS : 0)
-                            + (canProxyCapture ? OAUTH_BROWSER_PROXY_CAPTURE_TIMEOUT_SECONDS : 0)
-                            + OAUTH_BROWSER_PROXY_FALLBACK_TIMEOUT_SECONDS;
-            boolean browserOpened = false;
 
-            if (canAutoCapture) {
-                try {
-                    browserOpened = true;
-                    code = OAuthBrowserCallbackServer.openBrowserAndAwaitCode(
-                            authUrl,
-                            callbackUrl,
-                            OAUTH_BROWSER_LOCAL_CAPTURE_TIMEOUT_SECONDS
-                    );
-                } catch (Exception ex) {
-                    // Fall back to manual paste if local callback capture fails.
-                }
+            OAuthInteractiveCapture.Outcome outcome = OAuthInteractiveCapture.capture(
+                    importer.getApi(),
+                    SwingUtilities.getWindowAncestor(this),
+                    authUrl,
+                    callbackUrl,
+                    oauthState,
+                    OAuth2ConfigDialog.readSystemBrowserPreference(config),
+                    message -> SwingUtilities.invokeLater(() -> burp.ui.ToastManager.show(
+                            this, message, burp.ui.ToastManager.Level.INFO))
+            );
+
+            if (outcome.cancelled()) {
+                return;
             }
-
-            if (code == null || code.isEmpty()) {
-                if (!browserOpened) {
-                    openBrowser(authUrl);
-                }
-                if (canProxyCapture) {
-                    try {
-                        code = OAuthProxyCallbackCapture.awaitCodeFromProxy(
-                                importer.getApi(),
-                                callbackUrl,
-                                OAUTH_BROWSER_PROXY_CAPTURE_TIMEOUT_SECONDS,
-                                captureStartMillis
-                        );
-                    } catch (Exception ex) {
-                        // Fall back to manual paste mode if proxy capture fails.
-                    }
-                }
-                if (code == null || code.isEmpty()) {
-                    try {
-                        code = OAuthProxyCallbackCapture.awaitAnyCodeFromProxy(
-                                importer.getApi(),
-                                OAUTH_BROWSER_PROXY_FALLBACK_TIMEOUT_SECONDS,
-                                captureStartMillis
-                        );
-                    } catch (Exception ex) {
-                        // Fall back to manual paste mode if broad proxy capture fails.
-                    }
-                }
+            if (outcome.failureReason != null) {
+                showOAuthWarning(outcome.failureReason);
+                return;
             }
-
-            if (code == null || code.isEmpty()) {
-                showOAuthWarning(
-                        "Browser auth did not return a callback code automatically. "
-                                + "Manual paste popup is disabled. "
-                                + "Waited about " + waitBudgetSeconds + "s. "
-                                + "Check callback URL/port registration and retry."
-                );
+            if (!outcome.hasCode() && outcome.hasAccessToken()) {
+                authManager.setAccessToken(outcome.accessToken);
+                SwingUtilities.invokeLater(() -> burp.ui.ToastManager.show(
+                        this,
+                        "Access token captured from the callback",
+                        burp.ui.ToastManager.Level.INFO));
                 return;
             }
 
             burp.api.montoya.http.message.requests.HttpRequest req =
-                    factory.buildAuthorizationCodeTokenRequest(config, code, pkce.verifier);
+                    factory.buildAuthorizationCodeTokenRequest(config, outcome.code, pkce.verifier);
 
             if (useRepeater) {
                 importer.sendOAuthToRepeater(req);
