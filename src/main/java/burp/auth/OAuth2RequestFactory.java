@@ -221,7 +221,8 @@ public class OAuth2RequestFactory {
       String body = String.join("&", params);
       HttpUtils.HostInfo hostInfo = HttpUtils.parseUrl(resolvedUrl);
       String path = this.extractPath(resolvedUrl);
-      return this.buildRawRequest(path, hostInfo, body, authHeader, originOf(redirectUri));
+      return this.buildRawRequest(path, hostInfo, body, authHeader, originOf(redirectUri),
+         this.declaredTokenRequestHeaders(config));
    }
 
    public boolean isBrowserInteractiveFlow(OAuth2Config config) {
@@ -382,17 +383,65 @@ public class OAuth2RequestFactory {
       }
    }
 
+   /**
+    * Headers the collection declares for the token request, e.g. OpenCollection's
+    * {@code additionalParameters.accessTokenRequest} entries with {@code placement: header}.
+    * An explicitly declared header takes precedence over anything derived.
+    */
+   Map<String, String> declaredTokenRequestHeaders(OAuth2Config config) {
+      Map<String, String> out = new java.util.LinkedHashMap<>();
+      if (config == null || config.rawAttributes == null) return out;
+
+      String prefix = "additionalParameters.accessTokenRequest.";
+      for (Map.Entry<String, String> entry : config.rawAttributes.entrySet()) {
+         String key = entry.getKey();
+         if (key == null || !key.startsWith(prefix) || !key.endsWith(".name")) continue;
+         String base = key.substring(0, key.length() - ".name".length());
+         String placement = config.rawAttributes.get(base + ".placement");
+         if (placement != null && !"header".equalsIgnoreCase(placement.trim())) continue;
+         String name = entry.getValue();
+         String value = config.rawAttributes.get(base + ".value");
+         if (name == null || name.trim().isEmpty() || value == null) continue;
+         out.put(name.trim(), this.resolver.resolve(value));
+      }
+      return out;
+   }
+
+   /** Header names and values are never allowed to carry CR/LF into the request. */
+   private static String sanitizeHeaderName(String name) {
+      return name == null ? "" : name.trim().replaceAll("[\\r\\n:]", "");
+   }
+
+   private static String sanitizeHeaderValue(String value) {
+      return value == null ? "" : value.replaceAll("[\\r\\n]", "").trim();
+   }
+
    private String buildRawRequest(String path, HttpUtils.HostInfo hostInfo, String body, String authHeader, String origin) {
+      return this.buildRawRequest(path, hostInfo, body, authHeader, origin, null);
+   }
+
+   private String buildRawRequest(String path, HttpUtils.HostInfo hostInfo, String body, String authHeader,
+                                  String origin, Map<String, String> extraHeaders) {
       StringBuilder raw = new StringBuilder();
       raw.append("POST ").append(path).append(" HTTP/1.1\r\n");
       raw.append("Host: ").append(this.buildHostHeader(hostInfo)).append("\r\n");
       if (authHeader != null) {
          raw.append("Authorization: ").append(authHeader).append("\r\n");
       }
+      boolean originDeclared = false;
+      if (extraHeaders != null) {
+         for (Map.Entry<String, String> header : extraHeaders.entrySet()) {
+            String name = header.getKey();
+            if (name == null || name.trim().isEmpty()) continue;
+            if ("origin".equalsIgnoreCase(name.trim())) originDeclared = true;
+            raw.append(sanitizeHeaderName(name)).append(": ")
+               .append(sanitizeHeaderValue(header.getValue())).append("\r\n");
+         }
+      }
       // A redirect URI registered as a single-page application is only redeemable on a request
       // the provider considers cross-origin. Entra rejects it as AADSTS9002327 otherwise, and
       // providers that do not care simply ignore the header.
-      if (origin != null && !origin.isEmpty()) {
+      if (!originDeclared && origin != null && !origin.isEmpty()) {
          raw.append("Origin: ").append(origin).append("\r\n");
       }
 
