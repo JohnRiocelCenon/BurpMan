@@ -212,6 +212,10 @@ public class OAuth2Detector {
                String value;
                if (v != null && !v.isJsonNull()) {
                   if (!v.isJsonPrimitive()) {
+                     // Bruno's OpenCollection format nests what other formats keep flat, e.g.
+                     // credentials.clientId. Skipping these left the config half-empty with no
+                     // hint as to why, so they are flattened instead.
+                     this.collectNestedOAuth2Attributes(entry.getKey(), v, config);
                      continue;
                   }
 
@@ -222,8 +226,95 @@ public class OAuth2Detector {
 
                config.rawAttributes.put(entry.getKey(), value);
             }
+
+            this.applyNestedOAuth2Aliases(config);
          }
       }
+   }
+
+   /** Records a nested value under its dotted path so nothing is silently lost. */
+   private void collectNestedOAuth2Attributes(String path, JsonElement value, OAuth2Config config) {
+      if (value == null || value.isJsonNull()) return;
+
+      if (value.isJsonPrimitive()) {
+         config.rawAttributes.put(path, value.getAsString());
+         return;
+      }
+
+      if (value.isJsonObject()) {
+         JsonObject obj = value.getAsJsonObject();
+         // An empty object is how OpenCollection says "enabled with defaults", as in `pkce: {}`.
+         if (obj.entrySet().isEmpty()) {
+            config.rawAttributes.put(path, "true");
+            return;
+         }
+         for (Entry<String, JsonElement> entry : obj.entrySet()) {
+            this.collectNestedOAuth2Attributes(path + "." + entry.getKey(), entry.getValue(), config);
+         }
+         return;
+      }
+
+      if (value.isJsonArray()) {
+         int index = 0;
+         for (JsonElement child : value.getAsJsonArray()) {
+            // Name/value pairs read better under their own name than under an index.
+            if (child != null && child.isJsonObject()) {
+               JsonObject childObj = child.getAsJsonObject();
+               String name = childObj.has("name") && childObj.get("name").isJsonPrimitive()
+                  ? childObj.get("name").getAsString() : null;
+               if (name != null && !name.trim().isEmpty()) {
+                  this.collectNestedOAuth2Attributes(path + "." + name.trim(), child, config);
+                  index++;
+                  continue;
+               }
+            }
+            this.collectNestedOAuth2Attributes(path + "[" + index + "]", child, config);
+            index++;
+         }
+      }
+   }
+
+   /**
+    * Maps the nested OpenCollection names onto the flat ones the rest of the detector reads, so
+    * a Bruno YAML collection yields the same config as the equivalent Postman or Bruno JSON
+    * export. Existing flat keys always win, since they were stated explicitly.
+    */
+   private void applyNestedOAuth2Aliases(OAuth2Config config) {
+      alias(config, "credentials.clientId", "clientId");
+      alias(config, "credentials.clientSecret", "clientSecret");
+      alias(config, "credentials.placement", "client_authentication");
+      alias(config, "credentials.scope", "scope");
+      alias(config, "tokenConfig.id", "credentialsId");
+      alias(config, "tokenConfig.source", "tokenSource");
+      alias(config, "tokenConfig.placement.header", "headerPrefix");
+      alias(config, "settings.autoFetchToken", "autoFetchToken");
+      alias(config, "settings.autoRefreshToken", "autoRefreshToken");
+      // `flow` is OpenCollection's spelling of the grant type.
+      alias(config, "flow", "grant_type");
+
+      // `pkce: {}` means enabled with defaults. Inline empty maps can survive YAML parsing as
+      // the literal text "{}", so normalise it rather than leaving that on screen.
+      String pkce = config.rawAttributes.get("pkce");
+      if (pkce != null) {
+         String trimmed = pkce.trim();
+         if (trimmed.isEmpty() || "{}".equals(trimmed) || "[]".equals(trimmed)) {
+            config.rawAttributes.put("pkce", "true");
+         }
+      }
+
+      // `tokenConfig.placement: {header: ...}` means send the token as a header.
+      if (config.rawAttributes.containsKey("tokenConfig.placement.header")
+         && !config.rawAttributes.containsKey("addTokenTo")) {
+         config.rawAttributes.put("addTokenTo", "header");
+      }
+   }
+
+   private static void alias(OAuth2Config config, String from, String to) {
+      String value = config.rawAttributes.get(from);
+      if (value == null) return;
+      String existing = config.rawAttributes.get(to);
+      if (existing != null && !existing.trim().isEmpty()) return;
+      config.rawAttributes.put(to, value);
    }
 
    private String attr(OAuth2Config config, String key) {
