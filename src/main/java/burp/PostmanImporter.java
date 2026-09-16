@@ -723,7 +723,7 @@ public class PostmanImporter {
         // ✅ Cookie jar — stale session cookies (iPlanetDirectoryPro,
         //    OAuth state, ASP.NET_SessionId, etc.) survive Restart otherwise
         //    and get replayed on the next Run, which reuses an expired
-        //    session and breaks SSO / OIDC auth chains.
+        //    session and breaks OIDC auth chains.
         if (cookieJar != null) {
             cookieJar.clear();
         }
@@ -1452,7 +1452,7 @@ public class PostmanImporter {
 
             // Inject the session cookie for this host if we captured one
             // from a prior request in the same run. Without this, stateful
-            // auth flows (SSO, ForgeRock, Salesforce sessions) break after
+            // auth flows (ForgeRock, Salesforce sessions) break after
             // step 1 because subsequent steps don't carry the session ID.
             String cookieHeader = cookieJar.buildCookieHeader(hi.host);
             if (cookieHeader != null && !cookieHeader.isEmpty()) {
@@ -1491,7 +1491,7 @@ public class PostmanImporter {
                 } catch (Throwable ignore) {}
                 er.setResponseHeaders(respHeaders);
                 // Absorb Set-Cookie so the next request in this run can
-                // send the session cookie back. This is what makes SSO /
+                // send the session cookie back. This is what makes
                 // session-auth chains work in Run Scripts.
                 try { cookieJar.capture(hi.host, respHeaders); }
                 catch (Throwable ignore) {}
@@ -3615,7 +3615,7 @@ public class PostmanImporter {
                     // Honour bru.setNextRequest() from the post-response
                     // script. Real Bruno skips intervening requests when
                     // the script asks to jump to a named target — used by
-                    // SSO / OIDC flows to short-circuit MFA when the
+                    // OIDC flows to short-circuit MFA when the
                     // server returns an early tokenId.  Empty value =
                     // STOP run after this request (Bruno's documented
                     // semantics for {@code setNextRequest(null)}).
@@ -4359,7 +4359,7 @@ public class PostmanImporter {
                 // regardless of what the user's scripts choose to name them.
                 autoCaptureCommonTokens(er);
                 // Diagnostic: dump captured response headers when the script
-                // reads a redirect Location (SSO authorize / OAuth flows).
+                // reads a redirect Location (OAuth authorize flows).
                 try {
                     java.util.List<PostmanCollection.Header> dh = er.getResponseHeaders();
                     int hc = (dh == null) ? -1 : dh.size();
@@ -4481,7 +4481,7 @@ public class PostmanImporter {
             hostInfo.host, hostInfo.port, hostInfo.useHttps);
         try {
             // Inject Cookie header from the jar if a prior request in this run
-            // captured one for this host. Stateful auth chains (SSO,
+            // captured one for this host. Stateful auth chains (
             // ForgeRock, OIDC session cookies) require this — without it the
             // second step always 401s because the session is forgotten.
             byte[] reqBytes = request;

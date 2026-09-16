@@ -2021,7 +2021,7 @@ public final class RhinoScriptEngine {
         public static final class CookieJarStub {
             public void clear() {
                 // Bruno auth scripts call this in the FIRST request's pre-
-                // request hook to wipe stale OpenAM/SSO session cookies
+                // request hook to wipe stale OpenAM session cookies
                 // before starting the multi-step authenticate flow. Without
                 // it, the second request sends iPlanetDirectoryPro from a
                 // previous session and OpenAM short-circuits to a final
@@ -2704,7 +2704,7 @@ public final class RhinoScriptEngine {
         }
         /** Bruno's {@code res.getHeader(name)} convenience — case-insensitive
          *  single-header lookup used by scripts that parse Location/Set-Cookie
-         *  out of the response (SSO authorize → access_token chains rely on
+         *  out of the response (OAuth authorize → access_token chains rely on
          *  this to extract the OAuth code from the 302 redirect). */
         public Object getHeader(String name) {
             if (resp == null || name == null) return null;
