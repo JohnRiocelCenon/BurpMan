@@ -54,12 +54,16 @@ public class VariableResolver {
     public void addEnvironmentVariables(PostmanEnvironment environment) {
         if (environment.values != null) {
             for (PostmanEnvironment.Value value : environment.values) {
-                if (value.enabled && value.value != null) {
+                if (value.enabled) {
+                    // A declared variable with no value still belongs here. Bruno writes a
+                    // secret with its value withheld as a name-only entry, and dropping it
+                    // meant {{api_client_secret}} was missing from Edit Variables with
+                    // nothing to say the collection expects it to be filled in.
                     // Env vars outrank both globals and collection vars in
                     // Postman's precedence (globals < collection < env < runtime).
                     // Force-overwrite so a globals or collection-defined key
                     // loaded earlier doesn't shadow the env's authoritative value.
-                    variables.put(value.key, value.value);
+                    variables.put(value.key, value.value == null ? "" : value.value);
                 }
             }
         }
