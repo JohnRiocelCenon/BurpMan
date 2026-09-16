@@ -518,9 +518,10 @@ public class PostmanImporter {
                     String token = firstNonBlank(config.rawAttributes.get("accessToken"), fallbackToken);
                     if (token == null) continue;
                     String prefix = "$oauth2." + credentialsId + ".";
-                    out.put(prefix + "access_token", token);
+                    out.put(prefix + "access_token", bareAccessToken(token));
                     putIfPresent(out, prefix + "refresh_token", config.rawAttributes.get("refreshToken"));
                     putIfPresent(out, prefix + "id_token", config.rawAttributes.get("idToken"));
+                    putIfPresent(out, prefix + "token_type", config.rawAttributes.get("tokenType"));
                 }
             }
         } catch (Exception ignore) {
@@ -528,9 +529,28 @@ public class PostmanImporter {
 
         // A collection whose credentialsId we never saw still needs the default name to work.
         if (fallbackToken != null && !fallbackToken.isEmpty()) {
-            out.putIfAbsent("$oauth2.credentials.access_token", fallbackToken);
+            out.putIfAbsent("$oauth2.credentials.access_token", bareAccessToken(fallbackToken));
         }
         return out;
+    }
+
+    /**
+     * Returns the access token on its own.
+     *
+     * <p>OAuth 2.0 keeps the credential and the scheme apart: {@code access_token} is the token,
+     * {@code token_type} is how to present it. A collection that puts the value in a header of
+     * its own choosing, such as {@code x-authorization}, wants the bare token; prefixing it
+     * there sends something the gateway cannot parse.
+     */
+    static String bareAccessToken(String token) {
+        if (token == null) return null;
+        String t = token.trim();
+        for (String scheme : new String[]{"bearer ", "token ", "jwt "}) {
+            if (t.length() > scheme.length() && t.toLowerCase(java.util.Locale.ROOT).startsWith(scheme)) {
+                return t.substring(scheme.length()).trim();
+            }
+        }
+        return t;
     }
 
     private static void putIfPresent(java.util.Map<String, String> target, String key, String value) {
