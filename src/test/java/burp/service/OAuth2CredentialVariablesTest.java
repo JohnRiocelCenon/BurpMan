@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -110,6 +111,51 @@ class OAuth2CredentialVariablesTest {
       assertEquals("ENTRA-TOKEN", ctx.getEnvironmentVariables().get("entra_access_token"));
       assertTrue(ctx.getConsoleOutput() == null || !ctx.getConsoleOutput().contains("TypeError"),
          "script must not raise a TypeError: " + ctx.getConsoleOutput());
+   }
+
+   @Test
+   @DisplayName("bru.getOauth2CredentialVar is available, as it is in Bruno")
+   void supportsBruAccessor() {
+      Map<String, String> credentials = new LinkedHashMap<>();
+      credentials.put("$oauth2.credentials.access_token", "ENTRA-TOKEN");
+      ScriptContext ctx = contextWith(credentials);
+
+      // Verbatim from the OpenCollection "01 - Entra Generate Token.yml", including the
+      // line breaks. req.req only exists in Bruno's developer mode, so collections are
+      // expected to use this accessor instead.
+      runScript(ctx, "const token = bru.getOauth2CredentialVar(\n"
+            + "  \"$oauth2.credentials.access_token\"\n"
+            + ");\n\n"
+            + "bru.setEnvVar(\"entra_access_token\", token);");
+
+      assertEquals("ENTRA-TOKEN", ctx.getEnvironmentVariables().get("entra_access_token"));
+   }
+
+   @Test
+   @DisplayName("the accessor stores the bare token, with no scheme prefix")
+   void accessorYieldsBareToken() {
+      Map<String, String> credentials = new LinkedHashMap<>();
+      credentials.put("$oauth2.credentials.access_token", "eyJhbGciOiJSUzI1NiJ9.body.sig");
+      ScriptContext ctx = contextWith(credentials);
+
+      runScript(ctx, "bru.setEnvVar(\"t\", bru.getOauth2CredentialVar(\"$oauth2.credentials.access_token\"));");
+
+      String stored = ctx.getEnvironmentVariables().get("t");
+      // A collection putting this in a header of its own choosing, such as x-authorization,
+      // needs the token alone; a Bearer prefix there is not parseable by the gateway.
+      assertFalse(stored.toLowerCase().startsWith("bearer"), "expected a bare token but got: " + stored);
+      assertEquals("eyJhbGciOiJSUzI1NiJ9.body.sig", stored);
+   }
+
+   @Test
+   @DisplayName("an unknown credential key reads as absent rather than failing the call")
+   void unknownCredentialKeyIsAbsent() {
+      ScriptContext ctx = contextWith(new LinkedHashMap<>());
+
+      runScript(ctx, "const v = bru.getOauth2CredentialVar(\"$oauth2.nope.access_token\");\n"
+            + "bru.setEnvVar(\"probe\", v ? \"present\" : \"absent\");");
+
+      assertEquals("absent", ctx.getEnvironmentVariables().get("probe"));
    }
 }
 

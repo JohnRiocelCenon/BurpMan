@@ -2201,6 +2201,29 @@ public final class RhinoScriptEngine {
         public boolean hasEnvVar(String k) { return ctx.getEnvironmentVariables().containsKey(k); }
         public boolean hasVar(String k) { return ctx.getCollectionVariables().containsKey(k) || ctx.getVariable(k) != null; }
 
+        /**
+         * Reads a value published by an OAuth 2.0 token fetch, e.g.
+         * {@code bru.getOauth2CredentialVar("$oauth2.credentials.access_token")}.
+         *
+         * <p>This is the accessor Bruno exposes in both of its sandbox modes, and the one
+         * collections are expected to use; reaching through {@code req.req} only works in
+         * Bruno's developer mode. Without it a collection that fetches a token cannot hand it
+         * on, and the script dies on an undefined function rather than on anything it did.
+         */
+        public Object getOauth2CredentialVar(String k) {
+            if (k == null) return null;
+            java.util.Map<String, String> creds = ctx.getOauth2CredentialVariables();
+            String v = creds == null ? null : creds.get(k);
+            if (v == null && creds != null) {
+                for (java.util.Map.Entry<String, String> e : creds.entrySet()) {
+                    if (e.getKey() != null && e.getKey().equalsIgnoreCase(k)) { v = e.getValue(); break; }
+                }
+            }
+            return v == null ? null : asScriptValue(v);
+        }
+
+        public Object getOauth2CredentialVariable(String k) { return getOauth2CredentialVar(k); }
+
         public Object getCollectionVar(String k) {
             if (k == null) return null;
             String v = ctx.getCollectionVariables().get(k);
