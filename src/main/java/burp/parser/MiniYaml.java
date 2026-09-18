@@ -140,6 +140,10 @@ final class MiniYaml {
         }
 
         char first = rest.charAt(0);
+        if (first == '"' || first == '\'') {
+            Object[] multiLine = readQuotedScalar(rest, lines, nextIndex, first);
+            if (multiLine != null) return multiLine;
+        }
         if (first == '|' || first == '>') {
             boolean fold = first == '>';
             boolean stripFinal = rest.length() > 1 && rest.charAt(1) == '-';
@@ -187,6 +191,98 @@ final class MiniYaml {
         int hashIdx = findUnquotedComment(rest);
         String scalar = hashIdx >= 0 ? rest.substring(0, hashIdx).trim() : rest;
         return new Object[] { unquote(scalar), nextIndex };
+    }
+
+    /**
+     * Reads a quoted scalar that continues onto following lines.
+     *
+     * <p>YAML lets a quoted value run past the end of its line; the breaks fold into spaces and
+     * a run of blank lines becomes one newline fewer. Reading only the first line truncated a
+     * JSON request body to its opening brace, which the server then rejected as malformed.
+     *
+     * @return {@code [value, nextLineIndex]}, or null when the value ends on its own line, in
+     *         which case the ordinary single-line path applies
+     */
+    private static Object[] readQuotedScalar(String rest, String[] lines, int nextIndex, char quote) {
+        if (findClosingQuote(rest, quote, 1) >= 0) return null;
+
+        List<String> segments = new ArrayList<>();
+        segments.add(rest.substring(1));
+
+        int p = nextIndex;
+        boolean closed = false;
+        while (p < lines.length) {
+            String trimmed = lines[p].trim();
+            int close = findClosingQuote(trimmed, quote, 0);
+            p++;
+            if (close >= 0) {
+                segments.add(trimmed.substring(0, close));
+                closed = true;
+                break;
+            }
+            segments.add(trimmed);
+        }
+        // An unterminated quote means the document is not what we think it is; leaving it to
+        // the single-line path keeps the damage to one value instead of swallowing the file.
+        if (!closed) return null;
+
+        String folded = foldFlowLines(segments);
+        String value = quote == '"' ? decodeDoubleQuoted(folded) : folded.replace("''", "'");
+        return new Object[] { value, p };
+    }
+
+    /**
+     * Applies YAML's folding rules to the lines of a flow scalar: one break becomes a space,
+     * and n consecutive breaks become n-1 newlines. A line ending in an unpaired backslash is
+     * an escaped break, which joins the next line with nothing between.
+     */
+    private static String foldFlowLines(List<String> segments) {
+        StringBuilder sb = new StringBuilder();
+        int pendingBreaks = 0;
+        for (int i = 0; i < segments.size(); i++) {
+            String s = segments.get(i);
+            if (i == 0) {
+                sb.append(s);
+                continue;
+            }
+            if (s.isEmpty()) {
+                pendingBreaks++;
+                continue;
+            }
+            if (pendingBreaks > 0) {
+                for (int k = 0; k < pendingBreaks; k++) sb.append('\n');
+                pendingBreaks = 0;
+            } else if (endsWithEscapedBreak(sb)) {
+                sb.setLength(sb.length() - 1);
+            } else if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(s);
+        }
+        return sb.toString();
+    }
+
+    /** True when the text ends with an odd run of backslashes, i.e. the last one escapes. */
+    private static boolean endsWithEscapedBreak(CharSequence sb) {
+        int count = 0;
+        for (int i = sb.length() - 1; i >= 0 && sb.charAt(i) == '\\'; i--) count++;
+        return count % 2 == 1;
+    }
+
+    /** Index of the closing quote at or after {@code from}, or -1 if the line does not close it. */
+    private static int findClosingQuote(String s, char quote, int from) {
+        for (int i = from; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (quote == '"') {
+                if (c == '\\') { i++; continue; }
+                if (c == '"') return i;
+            } else if (c == '\'') {
+                // A doubled quote is an escaped quote, not the end of the scalar.
+                if (i + 1 < s.length() && s.charAt(i + 1) == '\'') { i++; continue; }
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static int leadingSpaces(String line) {
