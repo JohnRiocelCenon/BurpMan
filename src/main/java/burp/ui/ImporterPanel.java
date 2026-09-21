@@ -45,6 +45,7 @@ public class ImporterPanel {
     /** Buttons revealed only inside the Advanced popup. */
     private JButton advancedOpenApiBtn;
     private JButton advancedExportBtn;
+    private JButton advancedBrunoExportBtn;
     private JButton advancedSaveEnvBtn;
 
     /** Wrapper for the environment dropdown items. */
@@ -603,6 +604,11 @@ public class ImporterPanel {
         saveCollectionBtn.addActionListener(e -> saveCurrentCollection());
         this.advancedExportBtn = saveCollectionBtn;
         // Moved to the Advanced popup.
+
+        JButton brunoExportBtn = UITheme.button("🐶 Export to Bruno…", UITheme.BtnStyle.GHOST);
+        brunoExportBtn.setToolTipText("Export the live collection as a Bruno OpenCollection folder that Bruno can open directly");
+        brunoExportBtn.addActionListener(e -> exportCurrentCollectionAsBruno());
+        this.advancedBrunoExportBtn = brunoExportBtn;
 
         filePanel.add(browseGroup, gbc);
 
@@ -1794,9 +1800,21 @@ public class ImporterPanel {
         ioGroup.setBorder(UITheme.titled("Import / Export"));
         if (advancedOpenApiBtn != null) ioGroup.add(advancedOpenApiBtn);
         if (advancedExportBtn != null) ioGroup.add(advancedExportBtn);
+        if (advancedBrunoExportBtn != null) ioGroup.add(advancedBrunoExportBtn);
         if (advancedSaveEnvBtn != null) ioGroup.add(advancedSaveEnvBtn);
         ioGroup.setVisible(ioGroup.getComponentCount() > 0);
         buttonPanel.add(ioGroup);
+
+        // For whoever goes looking behind Ctrl+Shift+/ rather than taking the visible
+        // toolbar at face value. That instinct is the job.
+        JPanel easterEggRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        easterEggRow.setOpaque(false);
+        JLabel easterEgg = new JLabel("hello if you found this message, keep it up!");
+        easterEgg.setFont(easterEgg.getFont().deriveFont(java.awt.Font.ITALIC, 11f));
+        easterEgg.setForeground(new java.awt.Color(120, 140, 170));
+        easterEgg.setToolTipText("You read the keymap instead of guessing. Same energy that finds the bug.");
+        easterEggRow.add(easterEgg);
+        buttonPanel.add(easterEggRow);
 
         JPanel powerGroup = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
         powerGroup.setOpaque(false);
@@ -2843,6 +2861,101 @@ public class ImporterPanel {
             appendLog("❌ Export failed: " + ex.getMessage());
             JOptionPane.showMessageDialog(mainPanel,
                     "Export failed:\n" + ex.getMessage(),
+                    "Export Failed", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    /**
+     * Exports the live collection as a Bruno OpenCollection folder, so a collection imported from
+     * Postman can be handed to a team that works in Bruno. The live environment goes with it,
+     * including any variables the scripts have written since load.
+     */
+    private void exportCurrentCollectionAsBruno() {
+        burp.models.PostmanCollection coll = importer == null ? null : importer.getCurrentCollection();
+        if (coll == null) {
+            JOptionPane.showMessageDialog(mainPanel,
+                    "No collection loaded — Browse one first.",
+                    "Nothing to export", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        String collectionName = coll.info != null && coll.info.name != null
+                && !coll.info.name.trim().isEmpty()
+                ? coll.info.name.trim()
+                : "Exported Collection";
+        String folderName = burp.parser.BrunoCollectionExporter.folderNameFor(collectionName);
+
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Export as Bruno collection — choose the parent folder");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        if (selectedCollection != null && selectedCollection.getParentFile() != null) {
+            chooser.setCurrentDirectory(selectedCollection.getParentFile());
+        }
+        if (chooser.showSaveDialog(mainPanel) != JFileChooser.APPROVE_OPTION) return;
+
+        java.io.File parent = chooser.getSelectedFile();
+        if (parent == null) return;
+        java.io.File target = new java.io.File(parent, folderName);
+
+        // Writing into a folder that already holds a collection would interleave two sets of
+        // requests, so say what is about to happen rather than silently merging them.
+        if (target.isDirectory()) {
+            java.io.File[] existing = target.listFiles((d, n) -> n.toLowerCase().endsWith(".yml"));
+            if (existing != null && existing.length > 0) {
+                int ok = JOptionPane.showConfirmDialog(mainPanel,
+                        target.getName() + " already contains a collection.\n\n"
+                                + "Files with the same names will be replaced, and any others left in place.\n"
+                                + "Continue?",
+                        "Folder already in use", JOptionPane.YES_NO_OPTION,
+                        JOptionPane.WARNING_MESSAGE);
+                if (ok != JOptionPane.YES_OPTION) return;
+            }
+        }
+
+        java.util.List<burp.models.PostmanEnvironment> envs = new java.util.ArrayList<>();
+        try {
+            java.util.Map<String, String> vars = importer.getVariableResolver().getVariables();
+            if (vars != null && !vars.isEmpty()) {
+                burp.models.PostmanEnvironment env = new burp.models.PostmanEnvironment();
+                env.id = java.util.UUID.randomUUID().toString();
+                if (selectedEnvironment != null) {
+                    String n = selectedEnvironment.getName();
+                    int dot = n.indexOf('.');
+                    env.name = dot > 0 ? n.substring(0, dot) : n;
+                } else {
+                    env.name = collectionName + " Environment";
+                }
+                env.values = new java.util.ArrayList<>();
+                for (java.util.Map.Entry<String, String> e : vars.entrySet()) {
+                    burp.models.PostmanEnvironment.Value v = new burp.models.PostmanEnvironment.Value();
+                    v.key = e.getKey();
+                    v.value = e.getValue() == null ? "" : e.getValue();
+                    v.enabled = true;
+                    v.type = "default";
+                    env.values.add(v);
+                }
+                envs.add(env);
+            }
+        } catch (Exception ignore) {
+            // An environment we cannot read is not a reason to abandon the collection.
+        }
+
+        try {
+            burp.parser.BrunoCollectionExporter.Result result =
+                    new burp.parser.BrunoCollectionExporter().exportTo(coll, target, envs);
+            appendLog("🐶 Exported Bruno collection: " + result.root.getAbsolutePath()
+                    + "  (" + result.summary() + ")");
+            burp.ui.ToastManager.show(mainPanel,
+                    "Bruno export: " + result.summary(),
+                    burp.ui.ToastManager.Level.SUCCESS);
+            JOptionPane.showMessageDialog(mainPanel,
+                    "Exported " + result.summary() + " to:\n" + result.root.getAbsolutePath()
+                            + "\n\nOpen it in Bruno with Collection → Open Collection.",
+                    "Bruno export complete", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            appendLog("❌ Bruno export failed: " + ex.getMessage());
+            JOptionPane.showMessageDialog(mainPanel,
+                    "Bruno export failed:\n" + ex.getMessage(),
                     "Export Failed", JOptionPane.ERROR_MESSAGE);
         }
     }
