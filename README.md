@@ -3,7 +3,7 @@
 [![Burp Suite Extension](https://img.shields.io/badge/Burp%20Suite-Extension-orange)](https://portswigger.net/burp)
 [![Java](https://img.shields.io/badge/Java-11+-blue)](https://www.java.com)
 [![Version](https://img.shields.io/badge/Version-2.0.0-brightgreen)](https://github.com/JohnRiocelCenon/BurpMan/releases)
-[![Tests](https://img.shields.io/badge/Tests-59%20passing-brightgreen)](#-testing)
+[![Tests](https://img.shields.io/badge/Tests-231%20passing-brightgreen)](#-testing)
 
 A Burp Suite extension that imports **Postman** and **Bruno** API collections, with full variable resolution, pre/post-request script execution, OAuth2/JWT auth management, and a built-in request builder — all without leaving Burp.
 
@@ -19,13 +19,15 @@ If you know Postman, you already know 90% of this tool. The big difference: ever
 ## 🚀 Features
 
 - 📁 **Postman Collection v2.0 & v2.1** support
-- 🐾 **Bruno collection** support
+- 🐾 **Bruno collection** support — `.bru` files, single-file JSON exports, and **OpenCollection 1.0.0** YAML directories
+- 📤 **Export to Postman or Bruno** — write the loaded collection back out as `.postman_collection.json`, or as an OpenCollection folder Bruno opens directly
 - 📥 **OpenAPI 3.x / Swagger 2 import** — load any `.json` / `.yaml` spec straight into a collection
 - 🔧 **Variable resolution** — environment files, manual entry, smart detection
 - 🎲 **80+ dynamic faker variables** — `{{$randomFullName}}`, `{{$randomCity}}`, `{{$randomMacAddress}}`, `{{$randomLoremParagraph}}`, …
 - 📝 **Pre/Post-request scripts** — ES2015+ with real closures, destructuring, template literals, optional chaining, nullish coalescing, and **V8-faithful `let`/`const` scoping**; Postman and Bruno scripts run unmodified
 - 🔒 **Sandboxed script execution** — imported collections cannot reach the JVM, the filesystem, or your Burp session
 - 🔐 **11 auth schemes** — Bearer, Basic, API Key, OAuth2, OAuth 1.0a, AWS Signature v4, Digest, Hawk, Akamai EdgeGrid, ASAP, NTLM
+- 🪟 **Interactive OAuth2 without a proxy** — the authorization-code flow runs in a dedicated Chromium window and the callback is read straight from the browser, so the callback host never has to be reachable and nothing has to be proxied
 - 🗂️ **Folder-level auth overrides**
 - 📊 **Data-driven runs** — feed a CSV or JSON-array file and a folder runs once per row (Postman-style)
 - 📋 **Copy as code** — generate snippets in **15 languages / libraries**: curl (bash / cmd), Python (requests / httpx), JavaScript (fetch / axios), Node http, Java (OkHttp / HttpClient5), Go, PowerShell, PHP, Ruby, Rust, C#
@@ -105,7 +107,7 @@ each. The difference is optional extras, not script capability.
 ## 🧪 Testing
 
 ```bash
-mvn test              # 59 tests
+mvn test              # 231 tests
 mvn clean verify      # tests + both jars
 ```
 
@@ -119,6 +121,10 @@ only a test catches — wrong values rather than exceptions.
 | `Base64ToleranceTest` | The malformed-base64 key that caused a production 401 |
 | `EngineClassLoadingTest` | A `provided`-scope type cannot silently break the packaged jar |
 | `CollectionParsingTest` | Postman v2.1, environments, Bruno `.bru`, cURL round-trips |
+| `MultiLineScalarTest` | Quoted YAML scalars that run past their own line, so a JSON body is not truncated |
+| `BrunoCollectionExporterTest` | Every export round-trips back through the Bruno parser; names cannot escape the folder |
+| `OpenCollectionOAuth2Test` | The nested `credentials.clientId` shape OpenCollection uses |
+| `OAuthCallbackParserTest` | Authorization responses in a query, a fragment, or pasted bare |
 | `DiagTest` | Logging off by default, redaction, sink isolation |
 | `ResourceRegistryTest` | Unload ordering, failure isolation, idempotence |
 | `WorkspaceStoreTest` | Round-trip, corruption tolerance, no temp-file leaks |

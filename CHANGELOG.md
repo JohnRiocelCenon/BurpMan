@@ -1,5 +1,115 @@
 # CHANGELOG
 
+## 2.1.0 — Real collections, real auth
+
+Everything here came out of running the tool against collections written by other
+teams. Each entry is a defect that made a collection fail in BurpMan while working
+in Bruno, found by decoding what actually went on the wire rather than by reading
+the collection and inferring. The suite went from **59** tests to **231**.
+
+---
+
+### Fixed — a request body was truncated to its first line
+
+Bruno writes a body containing carriage returns as a double-quoted YAML scalar
+spread over several lines. `MiniYaml` handled literal and folded block scalars but
+read a quoted one from its own line only, so a JSON body arrived as the handful of
+characters up to its opening brace. The server answered `422 JSON decode error`,
+which read as though the collection were malformed.
+
+Quoted scalars are now followed to their closing quote with YAML's folding rules
+applied: one line break becomes a space, a run of breaks becomes one newline fewer,
+and a line ending in an unpaired backslash joins the next with nothing between.
+Escapes are decoded *after* folding, so a trailing `\r` and the fold together
+produce the CRLF the author wrote.
+
+The same shape is used for scripts, so a two-line `after-response` handler was also
+losing its second statement — the token was fetched and then never stored.
+
+### Fixed — OpenCollection's nested OAuth2 config was discarded
+
+OpenCollection nests what Postman and Bruno's JSON export keep flat: the client id
+lives under `credentials.clientId`, not `clientId`. Nested objects were skipped
+outright when collecting attributes, so the OAuth dialog opened with an empty
+Client ID and the sign-in could not be completed.
+
+Nested values are now flattened to a dotted path and mapped onto the names the
+detector already reads. An explicitly flat key still wins, since it was stated
+deliberately. `pkce: {}` means enabled with defaults and survives YAML parsing as
+the literal text `{}`, so it is normalised.
+
+### Fixed — single-page-application codes could not be redeemed
+
+A redirect URI registered under Entra's *Single-Page Application* platform is only
+redeemable on a request the provider treats as cross-origin, and it answers
+`AADSTS9002327` otherwise. The code exchange now carries an `Origin` header derived
+from the redirect URI, and a header the collection declares for the token request
+takes precedence over the derived one so it is never duplicated.
+
+### Fixed — `bru.getOauth2CredentialVar` was missing
+
+Bruno exposes this accessor in both of its sandbox modes, and collections use it to
+copy a fetched token into an environment variable. It was not implemented, so the
+script failed on an undefined function and the token never reached the requests
+that needed it.
+
+The published `access_token` is also the token on its own now. OAuth 2.0 keeps the
+credential and the scheme apart, and a collection that puts the value in a header
+of its own choosing — `x-authorization`, say — needs it bare.
+
+### Fixed — declared-but-valueless environment variables vanished
+
+Bruno withholds a secret's value when exporting, writing the entry with a name and
+no `value` key. Those were skipped on load, so the variable was absent from Edit
+Variables with nothing to say the collection expected it to be supplied. Declared
+variables are now loaded whether or not they carry a value. Disabled entries are
+still skipped: switched off is a deliberate choice rather than a withheld value.
+
+### Fixed — body variables were resolved on load
+
+Form fields were substituted when a request was cloned into the editor. That hid
+which variable fed each field, and a variable resolving to empty erased the
+reference entirely — an unset client secret showed as a blank cell. Templates are
+now preserved, matching what raw and GraphQL bodies already did. Sending is
+unaffected: both urlencoded and form-data bodies resolve per field at send time.
+
+---
+
+### Added — interactive OAuth2 that needs no proxy
+
+An `authorization_code` flow whose callback was neither localhost nor proxied had
+no way to complete. Sign-in now runs in a dedicated Chromium window opened against
+an empty profile, and the redirect is read out of the browser over the DevTools
+protocol. The callback host never has to resolve and nothing has to be proxied.
+
+The callback host is mapped to `~NOTFOUND` so the redirect stops at the browser —
+single page applications otherwise read the code and rewrite the URL, erasing the
+only copy before it can be observed. Neither the launched process nor
+`DevToolsActivePort` is trusted, because Chromium hands launches off to a running
+instance and lets the process we started exit.
+
+A `state` is generated when the collection sets none, and verified on return.
+Silent Windows SSO is suppressed and `prompt=login` is sent, so the tester chooses
+the identity rather than inheriting the desktop login. Falls back to a loopback
+listener, then Burp's proxy history, then a paste prompt that watches the clipboard.
+
+### Added — export to Bruno
+
+Export could only write Postman v2.1 JSON, so a collection could be brought in from
+Bruno but never handed back. It now also writes the OpenCollection 1.0.0 directory
+Bruno opens directly: `opencollection.yml`, one `.yml` per request, nested folders
+as subdirectories, and the live environment under `environments/`.
+
+The writer picks a representation that survives the trip back. Multi-line text
+becomes a literal block, except where whitespace carries meaning — a carriage
+return or a trailing space cannot be written that way — and a value that reads as a
+number or a boolean is quoted, otherwise a plan number loses its leading zero and a
+header value of `yes` comes back as `true`. Request names become file names, so
+separators are replaced and a leading dot or dash is dropped: a name like `../../x`
+cannot read as a parent reference once the separators are gone.
+
+---
+
 ## 2.0.0 — Revamp
 
 A correctness and safety pass over BurpMan 1.0.0. Every issue below was found
