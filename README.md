@@ -160,43 +160,9 @@ The build compiles clean at `-Xlint:all`.
 
 ## 🖼️ Screenshots
 
-### Overview — Light mode
-
-![Overview Light](screenshots/01-overview-light.png)
-
-### Overview — Dark mode
-
-![Overview Dark](screenshots/02-overview-dark.png)
-
-### Request Builder — Send requests inline
-
-![Request Builder](screenshots/03-request-builder.png)
-
-### Pre-/Post-request Scripts
-
-![Pre/Post Scripts](screenshots/04-pre-post-scripts.png)
-
-### Recent Files dropdown
-
-![Recent Files](screenshots/05-recent-files.png)
-
-### Tree context menu — Send / Run / Expand
-
-![Tree Context Menu](screenshots/06-tree-context-menu.png)
-
-### Collection tree
-
-![Collection Tree](screenshots/07-collection-tree.png)
-
-### Request History
-
-![History](screenshots/08-history.png)
-
-### Send to Repeater — Burp integration
-
-Every request flows through Burp's HTTP stack — visible in **Logger**, **Proxy History**, and ready to send to **Repeater** / **Intruder** / **Scanner**.
-
-![Repeater Handoff](screenshots/09-repeater-handoff.png)
+Screenshots are not committed to this repository. They were captured against
+real client collections during testing, and a public repository is the wrong
+place for that, so they were removed rather than redacted.
 
 ---
 
