@@ -2,14 +2,14 @@
 
 [![Burp Suite Extension](https://img.shields.io/badge/Burp%20Suite-Extension-orange)](https://portswigger.net/burp)
 [![Java](https://img.shields.io/badge/Java-11+-blue)](https://www.java.com)
-[![Version](https://img.shields.io/badge/Version-2.0.0-brightgreen)](https://github.com/JohnRiocelCenon/BurpMan/releases)
+[![Version](https://img.shields.io/badge/Version-2.1.0-brightgreen)](https://github.com/JohnRiocelCenon/BurpMan/releases)
 [![Tests](https://img.shields.io/badge/Tests-231%20passing-brightgreen)](#-testing)
 
 A Burp Suite extension that imports **Postman** and **Bruno** API collections, with full variable resolution, pre/post-request script execution, OAuth2/JWT auth management, and a built-in request builder — all without leaving Burp.
 
 If you know Postman, you already know 90% of this tool. The big difference: every request you send also goes through Burp Suite, so you can scan it.
 
-> **This is the revamped 2.0.0 line.** It fixes script-semantics bugs that
+> **This is the revamped 2.x line.** It fixes script-semantics bugs that
 > produced silently-wrong values, sandboxes collection scripts, and adds the
 > first regression suite. See [CHANGELOG.md](CHANGELOG.md) for the full list
 > with reproductions.
@@ -87,16 +87,16 @@ Enable debug logging when you need it:
 
 ```bash
 git clone https://github.com/JohnRiocelCenon/BurpMan.git
-cd BurpManRevamped
+cd BurpMan
 
 # Lite build (~1 MB) — Rhino script engine, core auth, all parsers
 mvn clean package
-# → target/BurpManRevamped-2.0.0-lite-jar-with-dependencies.jar
+# → target/BurpManRevamped-2.1.0-lite-jar-with-dependencies.jar
 
 # Full build (~4.2 MB) — adds RSyntaxTextArea syntax highlighting and
 # commons-codec for AWS SigV4 / OAuth1 / EdgeGrid signing
 mvn -Pfull clean package
-# → target/BurpManRevamped-2.0.0-full-jar-with-dependencies.jar
+# → target/BurpManRevamped-2.1.0-full-jar-with-dependencies.jar
 ```
 
 Both flavours bundle the Rhino script engine, so scripts behave identically in
